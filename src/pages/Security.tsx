@@ -8,6 +8,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/
 import { Progress } from "@/components/ui/progress";
 import { mockSecurityFindings, SecurityFinding } from "@/lib/mockData";
 import { useToast } from "@/hooks/use-toast";
+import { ComplianceWatchdog } from "@/components/advanced/ComplianceWatchdog";
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -343,6 +344,9 @@ export function Security() {
           </Card>
         </motion.div>
       </div>
+
+      {/* Advanced AI Features */}
+      <ComplianceWatchdog />
     </motion.div>
   );
 }

@@ -9,6 +9,8 @@ import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
 import confetti from 'canvas-confetti';
+import { CostSentinel } from "@/components/advanced/CostSentinel";
+import { CapacityOracle } from "@/components/advanced/CapacityOracle";
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -380,6 +382,10 @@ export function CostOptimization() {
           </Button>
         </motion.div>
       </div>
+
+      {/* Advanced AI Features */}
+      <CostSentinel />
+      <CapacityOracle />
     </motion.div>
   );
 }

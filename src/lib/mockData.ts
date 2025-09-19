@@ -243,3 +243,227 @@ export const mockSavingsData = {
     { month: "Dec", savings: 1234 }
   ]
 };
+
+// New advanced AI-agent features data
+export interface LeaderboardEntry {
+  id: string;
+  team: string;
+  user: string;
+  savings: number;
+  optimizations: number;
+  rank: number;
+}
+
+export interface DriftDetection {
+  id: string;
+  resource: string;
+  resourceType: string;
+  driftType: "Configuration" | "Security" | "Compliance";
+  severity: "Critical" | "High" | "Medium" | "Low";
+  actualValue: string;
+  expectedValue: string;
+  lastSync: string;
+}
+
+export interface CapacityForecast {
+  resource: string;
+  metric: "CPU" | "Memory" | "Storage" | "Network";
+  current: number;
+  predicted: number;
+  timeframe: string;
+  confidence: number;
+  status: "Normal" | "Warning" | "Critical";
+}
+
+export interface IncidentEvent {
+  id: string;
+  timestamp: string;
+  type: "Alert" | "Log" | "Metric" | "Action";
+  source: string;
+  message: string;
+  severity: "Info" | "Warning" | "Critical";
+}
+
+export interface SecurityKey {
+  id: string;
+  name: string;
+  type: "API Key" | "Service Account" | "SSH Key" | "Certificate";
+  lastUsed: string;
+  expiresIn: number; // days
+  status: "Active" | "Unused" | "Expired";
+}
+
+export const mockLeaderboard: LeaderboardEntry[] = [
+  {
+    id: "team-1",
+    team: "Platform Team",
+    user: "Sarah Chen",
+    savings: 2847,
+    optimizations: 12,
+    rank: 1
+  },
+  {
+    id: "team-2", 
+    team: "Data Engineering",
+    user: "Marcus Johnson",
+    savings: 2156,
+    optimizations: 8,
+    rank: 2
+  },
+  {
+    id: "team-3",
+    team: "Mobile Team",
+    user: "Elena Rodriguez",
+    savings: 1943,
+    optimizations: 15,
+    rank: 3
+  },
+  {
+    id: "team-4",
+    team: "Web Frontend",
+    user: "David Kim",
+    savings: 1678,
+    optimizations: 6,
+    rank: 4
+  }
+];
+
+export const mockDriftDetections: DriftDetection[] = [
+  {
+    id: "drift-1",
+    resource: "prod-web-server",
+    resourceType: "EC2",
+    driftType: "Configuration",
+    severity: "High",
+    actualValue: "t3.large",
+    expectedValue: "t3.medium",
+    lastSync: "2024-01-14T10:30:00Z"
+  },
+  {
+    id: "drift-2",
+    resource: "database-security-group",
+    resourceType: "Security Group",
+    driftType: "Security",
+    severity: "Critical",
+    actualValue: "0.0.0.0/0:3306",
+    expectedValue: "10.0.0.0/8:3306",
+    lastSync: "2024-01-15T08:15:00Z"
+  },
+  {
+    id: "drift-3",
+    resource: "backup-bucket-policy",
+    resourceType: "S3",
+    driftType: "Compliance",
+    severity: "Medium",
+    actualValue: "Public Read",
+    expectedValue: "Private",
+    lastSync: "2024-01-15T12:00:00Z"
+  }
+];
+
+export const mockCapacityForecasts: CapacityForecast[] = [
+  {
+    resource: "web-cluster",
+    metric: "CPU",
+    current: 67,
+    predicted: 89,
+    timeframe: "Next 4 hours",
+    confidence: 92,
+    status: "Warning"
+  },
+  {
+    resource: "database-main",
+    metric: "Memory",
+    current: 78,
+    predicted: 95,
+    timeframe: "Next 2 hours", 
+    confidence: 88,
+    status: "Critical"
+  },
+  {
+    resource: "cache-cluster",
+    metric: "CPU",
+    current: 45,
+    predicted: 52,
+    timeframe: "Next 6 hours",
+    confidence: 85,
+    status: "Normal"
+  }
+];
+
+export const mockIncidentTimeline: IncidentEvent[] = [
+  {
+    id: "event-1",
+    timestamp: "2024-01-15T14:32:15Z",
+    type: "Alert",
+    source: "CloudWatch",
+    message: "High CPU utilization detected on web-server-1",
+    severity: "Warning"
+  },
+  {
+    id: "event-2",
+    timestamp: "2024-01-15T14:33:02Z", 
+    type: "Metric",
+    source: "Prometheus",
+    message: "CPU usage spiked to 89% on web-server-1",
+    severity: "Critical"
+  },
+  {
+    id: "event-3",
+    timestamp: "2024-01-15T14:34:18Z",
+    type: "Log",
+    source: "Application",
+    message: "Database connection pool exhausted",
+    severity: "Critical"
+  },
+  {
+    id: "event-4",
+    timestamp: "2024-01-15T14:35:45Z",
+    type: "Action",
+    source: "AI Agent",
+    message: "Auto-scaling triggered: Added 2 instances",
+    severity: "Info"
+  }
+];
+
+export const mockSecurityKeys: SecurityKey[] = [
+  {
+    id: "key-1",
+    name: "legacy-api-key",
+    type: "API Key",
+    lastUsed: "2023-08-15T10:30:00Z",
+    expiresIn: 30,
+    status: "Unused"
+  },
+  {
+    id: "key-2",
+    name: "old-service-account",
+    type: "Service Account",
+    lastUsed: "2023-12-01T15:22:00Z",
+    expiresIn: -15,
+    status: "Expired"
+  },
+  {
+    id: "key-3",
+    name: "backup-ssh-key",
+    type: "SSH Key",
+    lastUsed: "2024-01-10T09:15:00Z",
+    expiresIn: 90,
+    status: "Unused"
+  }
+];
+
+export const mockSecurityScore = {
+  current: 87,
+  previous: 72,
+  trend: "up",
+  weeklyData: [
+    { day: "Mon", score: 72 },
+    { day: "Tue", score: 74 },
+    { day: "Wed", score: 78 },
+    { day: "Thu", score: 81 },
+    { day: "Fri", score: 85 },
+    { day: "Sat", score: 86 },
+    { day: "Sun", score: 87 }
+  ]
+};

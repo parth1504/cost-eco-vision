@@ -8,6 +8,7 @@ import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { mockResources, Resource } from "@/lib/mockData";
 import { useToast } from "@/hooks/use-toast";
+import { InfraGuardian } from "@/components/advanced/InfraGuardian";
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -347,6 +348,9 @@ export function Resources() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Advanced AI Features */}
+      <InfraGuardian />
     </motion.div>
   );
 }

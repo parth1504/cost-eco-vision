@@ -5,8 +5,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { mockAlerts, Alert } from "@/lib/mockData";
 import { useToast } from "@/hooks/use-toast";
+import { IncidentCoordinator } from "@/components/advanced/IncidentCoordinator";
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -350,6 +352,20 @@ export function Alerts() {
           )}
         </SheetContent>
       </Sheet>
+
+      {/* Advanced AI Features - Incident Coordinator Tab */}
+      <Tabs defaultValue="alerts" className="mt-8">
+        <TabsList className="grid w-full grid-cols-2">
+          <TabsTrigger value="alerts">Active Alerts</TabsTrigger>
+          <TabsTrigger value="incident-room">Incident Room</TabsTrigger>
+        </TabsList>
+        <TabsContent value="alerts" className="mt-4">
+          {/* Current alerts content is already shown above */}
+        </TabsContent>
+        <TabsContent value="incident-room" className="mt-4">
+          <IncidentCoordinator />
+        </TabsContent>
+      </Tabs>
     </motion.div>
   );
 }
