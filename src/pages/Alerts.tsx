@@ -66,20 +66,67 @@ export function Alerts() {
     filter === "All" || alert.severity === filter
   );
 
-  const handleApplyFix = (alertId: string) => {
-    setAlerts(prev => prev.map(alert => 
-      alert.id === alertId 
-        ? { ...alert, status: "Resolved" as const }
-        : alert
-    ));
-    
-    const alert = alerts.find(a => a.id === alertId);
-    toast({
-      title: "Fix Applied Successfully",
-      description: `${alert?.title} has been resolved${alert?.estimatedSavings ? ` with $${alert.estimatedSavings}/month savings` : ''}`,
-    });
-    
-    setSelectedAlert(null);
+  const handleApplyFix = async (alertId: string) => {
+    try {
+      const alert = alerts.find(a => a.id === alertId);
+      
+      // Call backend to update alert status
+      const { data, error } = await supabase.functions.invoke(`alerts/${alertId}`, {
+        method: 'PUT',
+        body: { status: 'Resolved' }
+      });
+
+      if (error) throw error;
+
+      // Update local state
+      setAlerts(prev => prev.map(a => 
+        a.id === alertId 
+          ? { ...a, status: "Resolved" as const }
+          : a
+      ));
+      
+      toast({
+        title: "Fix Applied Successfully",
+        description: `${alert?.title} has been resolved${alert?.estimatedSavings ? ` with $${alert.estimatedSavings}/month savings` : ''}`,
+      });
+      
+      setSelectedAlert(null);
+    } catch (error) {
+      console.error('Error applying fix:', error);
+      toast({
+        title: "Error",
+        description: "Failed to apply fix",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const handleDismiss = async (alertId: string) => {
+    try {
+      // Call backend to delete alert
+      const { error } = await supabase.functions.invoke(`alerts/${alertId}`, {
+        method: 'DELETE'
+      });
+
+      if (error) throw error;
+
+      // Update local state
+      setAlerts(prev => prev.filter(a => a.id !== alertId));
+      
+      toast({
+        title: "Alert Dismissed",
+        description: "Alert has been removed",
+      });
+      
+      setSelectedAlert(null);
+    } catch (error) {
+      console.error('Error dismissing alert:', error);
+      toast({
+        title: "Error",
+        description: "Failed to dismiss alert",
+        variant: "destructive"
+      });
+    }
   };
 
   const getSeverityColor = (severity: Alert['severity']) => {
@@ -377,7 +424,11 @@ export function Alerts() {
                       >
                         Apply Fix
                       </Button>
-                      <Button variant="outline" className="flex-1">
+                      <Button 
+                        variant="outline" 
+                        className="flex-1"
+                        onClick={() => handleDismiss(selectedAlert.id)}
+                      >
                         Dismiss
                       </Button>
                     </>

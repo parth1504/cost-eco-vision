@@ -5,8 +5,8 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// Mock alerts data (moved from frontend)
-const mockAlerts = [
+// Mock alerts data (moved from frontend) - making it mutable for updates/deletes
+let mockAlerts = [
   {
     id: "alert-1",
     title: "EC2 Instance Running Idle",
@@ -145,6 +145,64 @@ Deno.serve(async (req) => {
       console.log('Returning alert:', alertId);
       return new Response(
         JSON.stringify({ data: alert }),
+        { 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 200 
+        }
+      );
+    }
+
+    // PUT /alerts/{id} - Update alert status
+    if (req.method === 'PUT' && pathParts.length === 2) {
+      const alertId = pathParts[1];
+      const alertIndex = mockAlerts.findIndex(a => a.id === alertId);
+      
+      if (alertIndex === -1) {
+        console.log('Alert not found for update:', alertId);
+        return new Response(
+          JSON.stringify({ error: 'Alert not found' }),
+          { 
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            status: 404 
+          }
+        );
+      }
+
+      const body = await req.json();
+      mockAlerts[alertIndex] = { ...mockAlerts[alertIndex], ...body };
+      
+      console.log('Updated alert:', alertId, 'New status:', body.status);
+      return new Response(
+        JSON.stringify({ data: mockAlerts[alertIndex] }),
+        { 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 200 
+        }
+      );
+    }
+
+    // DELETE /alerts/{id} - Delete alert
+    if (req.method === 'DELETE' && pathParts.length === 2) {
+      const alertId = pathParts[1];
+      const alertIndex = mockAlerts.findIndex(a => a.id === alertId);
+      
+      if (alertIndex === -1) {
+        console.log('Alert not found for deletion:', alertId);
+        return new Response(
+          JSON.stringify({ error: 'Alert not found' }),
+          { 
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            status: 404 
+          }
+        );
+      }
+
+      const deletedAlert = mockAlerts[alertIndex];
+      mockAlerts.splice(alertIndex, 1);
+      
+      console.log('Deleted alert:', alertId);
+      return new Response(
+        JSON.stringify({ data: deletedAlert }),
         { 
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           status: 200 
