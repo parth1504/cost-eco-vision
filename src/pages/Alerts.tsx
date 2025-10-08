@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { AlertTriangle, CheckCircle, Clock, Filter, X } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -6,9 +6,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { mockAlerts, Alert } from "@/lib/mockData";
+import { Alert } from "@/lib/mockData";
 import { useToast } from "@/hooks/use-toast";
 import { IncidentCoordinator } from "@/components/advanced/IncidentCoordinator";
+import { supabase } from "@/integrations/supabase/client";
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -26,10 +27,40 @@ const itemVariants = {
 };
 
 export function Alerts() {
-  const [alerts, setAlerts] = useState<Alert[]>(mockAlerts);
+  const [alerts, setAlerts] = useState<Alert[]>([]);
   const [selectedAlert, setSelectedAlert] = useState<Alert | null>(null);
   const [filter, setFilter] = useState<"All" | "Critical" | "Warning" | "Info">("All");
+  const [loading, setLoading] = useState(true);
   const { toast } = useToast();
+
+  // Fetch alerts from backend on mount
+  useEffect(() => {
+    const fetchAlerts = async () => {
+      try {
+        setLoading(true);
+        const { data, error } = await supabase.functions.invoke('alerts', {
+          method: 'GET'
+        });
+
+        if (error) throw error;
+        
+        if (data?.data) {
+          setAlerts(data.data);
+        }
+      } catch (error) {
+        console.error('Error fetching alerts:', error);
+        toast({
+          title: "Error Loading Alerts",
+          description: "Failed to fetch alerts from backend",
+          variant: "destructive"
+        });
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchAlerts();
+  }, [toast]);
 
   const filteredAlerts = alerts.filter(alert => 
     filter === "All" || alert.severity === filter
@@ -173,21 +204,30 @@ export function Alerts() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="overflow-x-auto">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Alert</th>
-                    <th>Type</th>
-                    <th>Severity</th>
-                    <th>Resource</th>
-                    <th>Status</th>
-                    <th>Potential Savings</th>
-                    <th>Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredAlerts.map((alert) => (
+            {loading ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="text-muted-foreground">Loading alerts...</div>
+              </div>
+            ) : filteredAlerts.length === 0 ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="text-muted-foreground">No alerts found</div>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Alert</th>
+                      <th>Type</th>
+                      <th>Severity</th>
+                      <th>Resource</th>
+                      <th>Status</th>
+                      <th>Potential Savings</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredAlerts.map((alert) => (
                     <motion.tr
                       key={alert.id}
                       variants={itemVariants}
@@ -247,10 +287,11 @@ export function Alerts() {
                         </Button>
                       </td>
                     </motion.tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </CardContent>
         </Card>
       </motion.div>
