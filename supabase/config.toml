@@ -2,3 +2,6 @@ project_id = "peydehxzdjltslyklbfh"
 
 [functions.alerts]
 verify_jwt = false
+
+[functions.resources]
+verify_jwt = false

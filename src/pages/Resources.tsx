@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Server, Database, HardDrive, Zap, BarChart3, DollarSign, TrendingUp, Settings2 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -6,9 +6,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { mockResources, Resource } from "@/lib/mockData";
+import { Resource } from "@/lib/mockData";
 import { useToast } from "@/hooks/use-toast";
 import { InfraGuardian } from "@/components/advanced/InfraGuardian";
+import { supabase } from "@/integrations/supabase/client";
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -46,32 +47,81 @@ const getStatusColor = (status: Resource['status']) => {
 };
 
 export function Resources() {
-  const [resources, setResources] = useState<Resource[]>(mockResources);
+  const [resources, setResources] = useState<Resource[]>([]);
   const [selectedResource, setSelectedResource] = useState<Resource | null>(null);
+  const [loading, setLoading] = useState(true);
   const { toast } = useToast();
 
-  const handleOptimize = (resourceId: string, action: string) => {
-    setResources(prev => prev.map(resource => 
-      resource.id === resourceId 
-        ? { ...resource, status: "Optimized" as const, monthlyCost: resource.monthlyCost * 0.7 }
-        : resource
-    ));
-    
-    const resource = resources.find(r => r.id === resourceId);
-    const savings = resource ? Math.round((resource.monthlyCost * 0.3)) : 0;
-    
-    toast({
-      title: "Optimization Applied",
-      description: `${action} applied to ${resource?.name}. Estimated savings: $${savings}/month`,
-    });
-    
-    setSelectedResource(null);
+  // Fetch resources from backend
+  useEffect(() => {
+    const fetchResources = async () => {
+      try {
+        setLoading(true);
+        const { data, error } = await supabase.functions.invoke('resources');
+        
+        if (error) throw error;
+        
+        setResources(data || []);
+      } catch (error) {
+        console.error('Error fetching resources:', error);
+        toast({
+          title: "Error",
+          description: "Failed to load resources",
+          variant: "destructive",
+        });
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchResources();
+  }, [toast]);
+
+  const handleOptimize = async (resourceId: string, action: string) => {
+    try {
+      const resource = resources.find(r => r.id === resourceId);
+      const savings = resource ? Math.round((resource.monthlyCost * 0.3)) : 0;
+
+      // Call backend optimize endpoint
+      const { data, error } = await supabase.functions.invoke(`resources/optimize/${resourceId}`, {
+        method: 'POST',
+      });
+      
+      if (error) throw error;
+
+      // Update local state with optimized resource
+      setResources(prev => prev.map(r => 
+        r.id === resourceId ? data : r
+      ));
+      
+      toast({
+        title: "Optimization Applied",
+        description: `${action} applied to ${resource?.name}. Estimated savings: $${savings}/month`,
+      });
+      
+      setSelectedResource(null);
+    } catch (error) {
+      console.error('Error optimizing resource:', error);
+      toast({
+        title: "Error",
+        description: "Failed to optimize resource",
+        variant: "destructive",
+      });
+    }
   };
 
   const totalMonthlyCost = resources.reduce((sum, r) => sum + r.monthlyCost, 0);
   const runningResources = resources.filter(r => r.status === 'Running').length;
   const idleResources = resources.filter(r => r.status === 'Idle').length;
   const optimizedResources = resources.filter(r => r.status === 'Optimized').length;
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <p className="text-muted-foreground">Loading resources...</p>
+      </div>
+    );
+  }
 
   return (
     <motion.div
