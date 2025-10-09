@@ -52,7 +52,17 @@ serve(async (req) => {
     const url = new URL(req.url);
     const pathParts = url.pathname.split('/').filter(Boolean);
     
-    console.log('Request:', req.method, url.pathname);
+    console.log('Request:', req.method, url.pathname, 'Path parts:', pathParts);
+
+    // Handle default invoke (POST with no specific path or body)
+    // This is how supabase.functions.invoke('resources') calls the function
+    if (req.method === 'POST' && pathParts.length === 0) {
+      console.log('Default invoke - returning all resources');
+      return new Response(
+        JSON.stringify(mockResources),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
     // GET /resources/stats - Get summary statistics
     if (req.method === 'GET' && pathParts.length >= 1 && pathParts[pathParts.length - 1] === 'stats') {
@@ -118,15 +128,16 @@ serve(async (req) => {
       );
     }
 
-    // GET /resources - Get all resources (default for invoke without method)
-    if (req.method === 'GET' || (req.method === 'POST' && pathParts.length === 0)) {
+    // GET /resources - Get all resources
+    if (req.method === 'GET') {
+      console.log('GET /resources - returning all resources');
       return new Response(
         JSON.stringify(mockResources),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // POST /resources - Add new resource (with body)
+    // POST /resources - Add new resource (requires body)
     if (req.method === 'POST' && pathParts.length > 0) {
       const body = await req.json();
       const newResource = {
