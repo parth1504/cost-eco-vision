@@ -118,16 +118,16 @@ serve(async (req) => {
       );
     }
 
-    // GET /resources - Get all resources
-    if (req.method === 'GET') {
+    // GET /resources - Get all resources (default for invoke without method)
+    if (req.method === 'GET' || (req.method === 'POST' && pathParts.length === 0)) {
       return new Response(
         JSON.stringify(mockResources),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // POST /resources - Add new resource
-    if (req.method === 'POST') {
+    // POST /resources - Add new resource (with body)
+    if (req.method === 'POST' && pathParts.length > 0) {
       const body = await req.json();
       const newResource = {
         id: `resource-${Date.now()}`,
