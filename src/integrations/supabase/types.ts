@@ -14,7 +14,84 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      alerts: {
+        Row: {
+          affected_resources: string[] | null
+          created_at: string
+          id: string
+          message: string
+          severity: string
+          source: string
+          status: string
+          timestamp: string
+          title: string
+        }
+        Insert: {
+          affected_resources?: string[] | null
+          created_at?: string
+          id: string
+          message: string
+          severity: string
+          source: string
+          status?: string
+          timestamp?: string
+          title: string
+        }
+        Update: {
+          affected_resources?: string[] | null
+          created_at?: string
+          id?: string
+          message?: string
+          severity?: string
+          source?: string
+          status?: string
+          timestamp?: string
+          title?: string
+        }
+        Relationships: []
+      }
+      resources: {
+        Row: {
+          created_at: string
+          id: string
+          last_activity: string
+          monthly_cost: number
+          name: string
+          recommendations: string[] | null
+          region: string
+          status: string
+          type: string
+          updated_at: string
+          utilization: number
+        }
+        Insert: {
+          created_at?: string
+          id: string
+          last_activity: string
+          monthly_cost: number
+          name: string
+          recommendations?: string[] | null
+          region: string
+          status: string
+          type: string
+          updated_at?: string
+          utilization: number
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          last_activity?: string
+          monthly_cost?: number
+          name?: string
+          recommendations?: string[] | null
+          region?: string
+          status?: string
+          type?: string
+          updated_at?: string
+          utilization?: number
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never

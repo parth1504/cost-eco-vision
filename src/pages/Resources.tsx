@@ -52,18 +52,33 @@ export function Resources() {
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();
 
-  // Fetch resources from backend
+  // Fetch resources from Supabase
   useEffect(() => {
     const fetchResources = async () => {
       try {
         setLoading(true);
-        const { data, error } = await supabase.functions.invoke('resources',{
-          method: 'GET'
-        });
+        const { data, error } = await supabase
+          .from('resources')
+          .select('*')
+          .order('created_at', { ascending: false });
         
         if (error) throw error;
         
-        setResources(data || []);
+        if (data) {
+          // Transform database format to component format
+          const transformedResources = data.map(resource => ({
+            id: resource.id,
+            name: resource.name,
+            type: resource.type as Resource['type'],
+            region: resource.region,
+            status: resource.status as Resource['status'],
+            utilization: resource.utilization,
+            monthlyCost: resource.monthly_cost,
+            lastActivity: resource.last_activity,
+            recommendations: resource.recommendations || []
+          }));
+          setResources(transformedResources);
+        }
       } catch (error) {
         console.error('Error fetching resources:', error);
         toast({
@@ -83,17 +98,30 @@ export function Resources() {
     try {
       const resource = resources.find(r => r.id === resourceId);
       const savings = resource ? Math.round((resource.monthlyCost * 0.3)) : 0;
+      const newMonthlyCost = resource ? resource.monthlyCost * 0.7 : 0;
 
-      // Call backend optimize endpoint
-      const { data, error } = await supabase.functions.invoke(`resources/optimize/${resourceId}`, {
-        method: 'POST',
-      });
+      // Update resource in database to optimized status
+      const { error } = await supabase
+        .from('resources')
+        .update({ 
+          status: 'Optimized',
+          utilization: Math.floor((resource?.utilization || 0) * 0.7),
+          monthly_cost: newMonthlyCost,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', resourceId);
       
       if (error) throw error;
 
       // Update local state with optimized resource
       setResources(prev => prev.map(r => 
-        r.id === resourceId ? data : r
+        r.id === resourceId ? {
+          ...r,
+          status: 'Optimized' as const,
+          utilization: Math.floor(r.utilization * 0.7),
+          monthlyCost: r.monthlyCost * 0.7,
+          recommendations: []
+        } : r
       ));
       
       toast({

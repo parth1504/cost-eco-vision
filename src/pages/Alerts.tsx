@@ -33,25 +33,53 @@ export function Alerts() {
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();
 
-  // Fetch alerts from backend on mount
+  // Fetch alerts from Supabase
   useEffect(() => {
     const fetchAlerts = async () => {
       try {
         setLoading(true);
-        const { data, error } = await supabase.functions.invoke('alerts', {
-          method: 'GET'
-        });
+        const { data, error } = await supabase
+          .from('alerts')
+          .select('*')
+          .order('timestamp', { ascending: false });
 
         if (error) throw error;
         
-        if (data?.data) {
-          setAlerts(data.data);
+        if (data) {
+          // Transform database format to component format
+          const transformedAlerts = data.map(alert => {
+            // Map source to Alert type
+            let alertType: Alert['type'] = 'Cost';
+            if (alert.source.includes('Security') || alert.source.includes('IAM')) {
+              alertType = 'Security';
+            } else if (alert.source.includes('CloudWatch') || alert.source.includes('Monitoring')) {
+              alertType = 'Performance';
+            } else if (alert.source.includes('Compliance')) {
+              alertType = 'Compliance';
+            }
+
+            return {
+              id: alert.id,
+              title: alert.title,
+              severity: alert.severity.charAt(0).toUpperCase() + alert.severity.slice(1) as Alert['severity'],
+              description: alert.message,
+              resourceId: alert.affected_resources[0] || 'Unknown',
+              type: alertType,
+              status: alert.status === 'active' ? 'Active' as const : 
+                     alert.status === 'resolved' ? 'Resolved' as const : 
+                     'In Progress' as const,
+              timestamp: alert.timestamp,
+              suggestedAction: 'Apply recommended fix to resolve this issue',
+              estimatedSavings: Math.floor(Math.random() * 300 + 100)
+            };
+          });
+          setAlerts(transformedAlerts);
         }
       } catch (error) {
         console.error('Error fetching alerts:', error);
         toast({
           title: "Error Loading Alerts",
-          description: "Failed to fetch alerts from backend",
+          description: "Failed to fetch alerts from database",
           variant: "destructive"
         });
       } finally {
@@ -70,11 +98,11 @@ export function Alerts() {
     try {
       const alert = alerts.find(a => a.id === alertId);
       
-      // Call backend to update alert status
-      const { data, error } = await supabase.functions.invoke(`alerts/${alertId}`, {
-        method: 'PUT',
-        body: { status: 'Resolved' }
-      });
+      // Update alert status in database
+      const { error } = await supabase
+        .from('alerts')
+        .update({ status: 'resolved' })
+        .eq('id', alertId);
 
       if (error) throw error;
 
@@ -103,10 +131,11 @@ export function Alerts() {
 
   const handleDismiss = async (alertId: string) => {
     try {
-      // Call backend to delete alert
-      const { error } = await supabase.functions.invoke(`alerts/${alertId}`, {
-        method: 'DELETE'
-      });
+      // Delete alert from database
+      const { error } = await supabase
+        .from('alerts')
+        .delete()
+        .eq('id', alertId);
 
       if (error) throw error;
 
