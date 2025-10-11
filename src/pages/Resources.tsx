@@ -57,7 +57,9 @@ export function Resources() {
     const fetchResources = async () => {
       try {
         setLoading(true);
-        const { data, error } = await supabase.functions.invoke('resources');
+        const { data, error } = await supabase.functions.invoke('resources',{
+          method: 'GET'
+        });
         
         if (error) throw error;
         
