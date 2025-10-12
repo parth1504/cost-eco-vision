@@ -82,7 +82,7 @@ export function Resources() {
   const handleOptimize = async (resourceId: string, action: string) => {
     try {
       const resource = resources.find(r => r.id === resourceId);
-      const savings = resource ? Math.round((resource.monthlyCost * 0.3)) : 0;
+      const savings = resource ? Math.round((resource.monthly_cost * 0.3)) : 0;
 
       const response = await fetch(`http://localhost:8000/resources/${resourceId}/optimize`, {
         method: 'PUT',
@@ -116,7 +116,7 @@ export function Resources() {
     }
   };
 
-  const totalMonthlyCost = resources.reduce((sum, r) => sum + r.monthlyCost, 0);
+  const totalMonthlyCost = resources.reduce((sum, r) => sum + r.monthly_cost, 0);
   const runningResources = resources.filter(r => r.status === 'Running').length;
   const idleResources = resources.filter(r => r.status === 'Idle').length;
   const optimizedResources = resources.filter(r => r.status === 'Optimized').length;
@@ -250,7 +250,8 @@ export function Resources() {
                     <div className="flex justify-between items-center">
                       <span className="text-sm text-muted-foreground">Monthly Cost</span>
                       <span className="font-bold text-foreground">
-                        ${resource.monthlyCost.toFixed(2)}
+
+                        ${resource.monthly_cost.toFixed(2)}
                       </span>
                     </div>
 
@@ -326,7 +327,7 @@ export function Resources() {
                       <div className="text-center">
                         <p className="text-sm text-muted-foreground">Monthly Cost</p>
                         <p className="text-2xl font-bold text-foreground mt-1">
-                          ${selectedResource.monthlyCost.toFixed(2)}
+                          ${selectedResource.monthly_cost.toFixed(2)}
                         </p>
                       </div>
                     </CardContent>
@@ -369,7 +370,7 @@ export function Resources() {
                           <div className="flex-1">
                             <p className="text-sm font-medium text-foreground">{rec}</p>
                             <p className="text-xs text-muted-foreground mt-1">
-                              Estimated savings: ${Math.round(selectedResource.monthlyCost * 0.3)}/month
+                              Estimated savings: ${Math.round(selectedResource.monthly_cost * 0.3)}/month
                             </p>
                           </div>
                         </div>

@@ -19,7 +19,7 @@ export interface Resource {
   type: "EC2" | "RDS" | "S3" | "Lambda" | "ELB";
   status: "Running" | "Idle" | "Stopped" | "Optimized";
   utilization: number;
-  monthlyCost: number;
+  monthly_cost: number;
   region: string;
   recommendations: string[];
   lastActivity: string;
@@ -103,7 +103,7 @@ export const mockResources: Resource[] = [
     type: "EC2",
     status: "Running",
     utilization: 15,
-    monthlyCost: 89.50,
+    monthly_cost: 89.50,
     region: "us-east-1",
     recommendations: ["Right-size to t3.small", "Enable detailed monitoring"],
     lastActivity: "2024-01-15T12:00:00Z"
@@ -114,7 +114,7 @@ export const mockResources: Resource[] = [
     type: "RDS",
     status: "Running",
     utilization: 67,
-    monthlyCost: 234.00,
+    monthly_cost: 234.00,
     region: "us-east-1",
     recommendations: ["Remove public access", "Enable encryption"],
     lastActivity: "2024-01-15T11:30:00Z"
@@ -125,7 +125,7 @@ export const mockResources: Resource[] = [
     type: "S3",
     status: "Optimized",
     utilization: 0,
-    monthlyCost: 45.20,
+    monthly_cost: 45.20,
     region: "us-east-1",
     recommendations: ["Archive old data to Glacier"],
     lastActivity: "2024-01-14T20:15:00Z"
