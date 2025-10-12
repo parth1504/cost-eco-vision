@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Resource } from "@/lib/mockData";
 import { useToast } from "@/hooks/use-toast";
 import { InfraGuardian } from "@/components/advanced/InfraGuardian";
-import { supabase } from "@/integrations/supabase/client";
+// Removed Supabase import - now using FastAPI
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -52,23 +52,23 @@ export function Resources() {
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();
 
-  // Fetch resources from backend
+  // Fetch resources from FastAPI backend
   useEffect(() => {
     const fetchResources = async () => {
       try {
         setLoading(true);
-        const { data, error } = await supabase.functions.invoke('resources',{
-          method: 'GET'
-        });
+        const response = await fetch('http://localhost:8000/resources');
         
-        if (error) throw error;
+        if (!response.ok) throw new Error('Failed to fetch resources');
+        
+        const data = await response.json();
         
         setResources(data || []);
       } catch (error) {
         console.error('Error fetching resources:', error);
         toast({
           title: "Error",
-          description: "Failed to load resources",
+          description: "Failed to load resources. Make sure FastAPI server is running on localhost:8000",
           variant: "destructive",
         });
       } finally {
@@ -84,12 +84,16 @@ export function Resources() {
       const resource = resources.find(r => r.id === resourceId);
       const savings = resource ? Math.round((resource.monthlyCost * 0.3)) : 0;
 
-      // Call backend optimize endpoint
-      const { data, error } = await supabase.functions.invoke(`resources/optimize/${resourceId}`, {
-        method: 'POST',
+      const response = await fetch(`http://localhost:8000/resources/${resourceId}/optimize`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
       });
       
-      if (error) throw error;
+      if (!response.ok) throw new Error('Failed to optimize resource');
+      
+      const data = await response.json();
 
       // Update local state with optimized resource
       setResources(prev => prev.map(r => 

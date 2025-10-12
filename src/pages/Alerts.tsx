@@ -9,7 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert } from "@/lib/mockData";
 import { useToast } from "@/hooks/use-toast";
 import { IncidentCoordinator } from "@/components/advanced/IncidentCoordinator";
-import { supabase } from "@/integrations/supabase/client";
+// Removed Supabase import - now using FastAPI
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -33,25 +33,22 @@ export function Alerts() {
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();
 
-  // Fetch alerts from backend on mount
+  // Fetch alerts from FastAPI backend
   useEffect(() => {
     const fetchAlerts = async () => {
       try {
         setLoading(true);
-        const { data, error } = await supabase.functions.invoke('alerts', {
-          method: 'GET'
-        });
-
-        if (error) throw error;
+        const response = await fetch('http://localhost:8000/alerts');
         
-        if (data?.data) {
-          setAlerts(data.data);
-        }
+        if (!response.ok) throw new Error('Failed to fetch alerts');
+        
+        const data = await response.json();
+        setAlerts(data);
       } catch (error) {
         console.error('Error fetching alerts:', error);
         toast({
           title: "Error Loading Alerts",
-          description: "Failed to fetch alerts from backend",
+          description: "Failed to fetch alerts. Make sure FastAPI server is running on localhost:8000",
           variant: "destructive"
         });
       } finally {
@@ -70,13 +67,16 @@ export function Alerts() {
     try {
       const alert = alerts.find(a => a.id === alertId);
       
-      // Call backend to update alert status
-      const { data, error } = await supabase.functions.invoke(`alerts/${alertId}`, {
+      // Call FastAPI backend to update alert status
+      const response = await fetch(`http://localhost:8000/alerts/${alertId}`, {
         method: 'PUT',
-        body: { status: 'Resolved' }
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ status: 'resolved' }),
       });
 
-      if (error) throw error;
+      if (!response.ok) throw new Error('Failed to update alert');
 
       // Update local state
       setAlerts(prev => prev.map(a => 
@@ -103,12 +103,12 @@ export function Alerts() {
 
   const handleDismiss = async (alertId: string) => {
     try {
-      // Call backend to delete alert
-      const { error } = await supabase.functions.invoke(`alerts/${alertId}`, {
-        method: 'DELETE'
+      // Call FastAPI backend to delete alert
+      const response = await fetch(`http://localhost:8000/alerts/${alertId}`, {
+        method: 'DELETE',
       });
 
-      if (error) throw error;
+      if (!response.ok) throw new Error('Failed to delete alert');
 
       // Update local state
       setAlerts(prev => prev.filter(a => a.id !== alertId));
