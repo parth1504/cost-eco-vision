@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Shield, AlertTriangle, CheckCircle, Eye, Lock, FileText, DollarSign } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Progress } from "@/components/ui/progress";
-import { mockSecurityFindings, SecurityFinding } from "@/lib/mockData";
+import { SecurityFinding } from "@/lib/mockData";
 import { useToast } from "@/hooks/use-toast";
 import { ComplianceWatchdog } from "@/components/advanced/ComplianceWatchdog";
 
@@ -50,21 +50,63 @@ const getSeverityIcon = (severity: SecurityFinding['severity']) => {
 };
 
 export function Security() {
-  const [findings, setFindings] = useState<SecurityFinding[]>(mockSecurityFindings);
+  const [findings, setFindings] = useState<SecurityFinding[]>([]);
+  const [loading, setLoading] = useState(true);
   const { toast } = useToast();
 
-  const handleFixFinding = (findingId: string) => {
-    setFindings(prev => prev.map(finding => 
-      finding.id === findingId 
-        ? { ...finding, status: "Fixed" as const }
-        : finding
-    ));
-    
-    const finding = findings.find(f => f.id === findingId);
-    toast({
-      title: "Security Issue Fixed",
-      description: `${finding?.title} has been resolved successfully.`,
-    });
+  useEffect(() => {
+    fetchSecurityData();
+  }, []);
+
+  const fetchSecurityData = async () => {
+    try {
+      const response = await fetch("http://localhost:8000/security");
+      const data = await response.json();
+      setFindings(data.findings);
+    } catch (error) {
+      console.error("Failed to fetch security data:", error);
+      toast({
+        title: "Error",
+        description: "Failed to load security data",
+        variant: "destructive"
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleFixFinding = async (findingId: string) => {
+    try {
+      const response = await fetch("http://localhost:8000/security/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          finding_id: findingId,
+          updates: { status: "Fixed" }
+        })
+      });
+
+      if (response.ok) {
+        setFindings(prev => prev.map(finding => 
+          finding.id === findingId 
+            ? { ...finding, status: "Fixed" as const }
+            : finding
+        ));
+        
+        const finding = findings.find(f => f.id === findingId);
+        toast({
+          title: "Security Issue Fixed",
+          description: `${finding?.title} has been resolved successfully.`,
+        });
+      }
+    } catch (error) {
+      console.error("Failed to update finding:", error);
+      toast({
+        title: "Error",
+        description: "Failed to apply fix",
+        variant: "destructive"
+      });
+    }
   };
 
   const openFindings = findings.filter(f => f.status === 'Open').length;

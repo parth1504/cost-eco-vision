@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { DollarSign, TrendingUp, Leaf, Zap, Settings, Sparkles } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -33,56 +33,96 @@ export function CostOptimization() {
   const [schedulingEnabled, setSchedulingEnabled] = useState(false);
   const [autoScalingLevel, setAutoScalingLevel] = useState([50]);
   const [storageOptEnabled, setStorageOptEnabled] = useState(true);
+  const [projectedSavings, setProjectedSavings] = useState({ monthly: 0, yearly: 0, co2: 0, optimization_score: 0 });
+  const [loading, setLoading] = useState(true);
   
   const { toast } = useToast();
 
-  // Calculate projected savings based on settings
-  const calculateSavings = () => {
-    let monthlySavings = 0;
-    let co2Reduction = 0;
+  useEffect(() => {
+    fetchOptimizationData();
+  }, []);
 
-    if (idleResourcesEnabled) {
-      monthlySavings += 245;
-      co2Reduction += 0.8;
+  useEffect(() => {
+    updateProjections();
+  }, [idleResourcesEnabled, rightSizingLevel, schedulingEnabled, autoScalingLevel, storageOptEnabled]);
+
+  const fetchOptimizationData = async () => {
+    try {
+      const response = await fetch("http://localhost:8000/optimization");
+      const data = await response.json();
+      
+      if (data.config) {
+        setIdleResourcesEnabled(data.config.idle_resources_enabled);
+        setRightSizingLevel([data.config.right_sizing_level]);
+        setSchedulingEnabled(data.config.scheduling_enabled);
+        setAutoScalingLevel([data.config.auto_scaling_level]);
+        setStorageOptEnabled(data.config.storage_optimization_enabled);
+      }
+      
+      if (data.projections) {
+        setProjectedSavings(data.projections);
+      }
+    } catch (error) {
+      console.error("Failed to fetch optimization data:", error);
+      toast({
+        title: "Error",
+        description: "Failed to load optimization data",
+        variant: "destructive"
+      });
+    } finally {
+      setLoading(false);
     }
-
-    monthlySavings += (rightSizingLevel[0] / 100) * 400;
-    co2Reduction += (rightSizingLevel[0] / 100) * 1.2;
-
-    if (schedulingEnabled) {
-      monthlySavings += 156;
-      co2Reduction += 0.5;
-    }
-
-    monthlySavings += (autoScalingLevel[0] / 100) * 300;
-    co2Reduction += (autoScalingLevel[0] / 100) * 0.9;
-
-    if (storageOptEnabled) {
-      monthlySavings += 89;
-      co2Reduction += 0.3;
-    }
-
-    return {
-      monthly: Math.round(monthlySavings),
-      yearly: Math.round(monthlySavings * 12),
-      co2: Math.round(co2Reduction * 10) / 10
-    };
   };
 
-  const projectedSavings = calculateSavings();
+  const updateProjections = async () => {
+    try {
+      const config = {
+        idle_resources_enabled: idleResourcesEnabled,
+        right_sizing_level: rightSizingLevel[0],
+        scheduling_enabled: schedulingEnabled,
+        auto_scaling_level: autoScalingLevel[0],
+        storage_optimization_enabled: storageOptEnabled
+      };
 
-  const handleApplyOptimization = () => {
-    // Trigger confetti animation
-    confetti({
-      particleCount: 100,
-      spread: 70,
-      origin: { y: 0.6 }
-    });
+      const response = await fetch("http://localhost:8000/optimization/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ config })
+      });
 
-    toast({
-      title: "🎉 Optimization Plan Applied!",
-      description: `Your plan will save $${projectedSavings.monthly}/month and reduce CO₂ by ${projectedSavings.co2} tons annually.`,
-    });
+      const data = await response.json();
+      if (data.projections) {
+        setProjectedSavings(data.projections);
+      }
+    } catch (error) {
+      console.error("Failed to update projections:", error);
+    }
+  };
+
+  const handleApplyOptimization = async () => {
+    try {
+      // Save current configuration to backend
+      await updateProjections();
+
+      // Trigger confetti animation
+      confetti({
+        particleCount: 100,
+        spread: 70,
+        origin: { y: 0.6 }
+      });
+
+      toast({
+        title: "🎉 Optimization Plan Applied!",
+        description: `Your plan will save $${projectedSavings.monthly}/month and reduce CO₂ by ${projectedSavings.co2} tons annually.`,
+      });
+    } catch (error) {
+      console.error("Failed to apply optimization:", error);
+      toast({
+        title: "Error",
+        description: "Failed to apply optimization plan",
+        variant: "destructive"
+      });
+    }
   };
 
   return (
@@ -330,9 +370,9 @@ export function CostOptimization() {
               <div className="space-y-3">
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Optimization Score</span>
-                  <span className="font-medium">87%</span>
+                  <span className="font-medium">{projectedSavings.optimization_score}%</span>
                 </div>
-                <Progress value={87} className="h-3" />
+                <Progress value={projectedSavings.optimization_score} className="h-3" />
               </div>
             </CardContent>
           </Card>

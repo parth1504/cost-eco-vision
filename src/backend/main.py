@@ -3,6 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict, Any
 import alerts
 import resources
+import security
+import optimization
 
 app = FastAPI(title="Cloud Management API")
 
@@ -65,6 +67,41 @@ def optimize_resource(resource_id: str):
         "monthly_cost": round(resource["monthly_cost"] * 0.7, 2)
     })
     return updated_resource
+
+# Security endpoints
+@app.get("/security")
+def get_security():
+    return security.get_all_findings()
+
+@app.get("/security/{finding_id}")
+def get_security_finding(finding_id: str):
+    finding = security.get_finding_by_id(finding_id)
+    if not finding:
+        raise HTTPException(status_code=404, detail="Security finding not found")
+    return finding
+
+@app.post("/security/update")
+def update_security_finding(finding_id: str, updates: Dict[str, Any]):
+    finding = security.update_finding(finding_id, updates)
+    if not finding:
+        raise HTTPException(status_code=404, detail="Security finding not found")
+    return {"success": True, "finding": finding}
+
+# Optimization endpoints
+@app.get("/optimization")
+def get_optimization():
+    return optimization.get_optimization_data()
+
+@app.post("/optimization/config")
+def update_optimization(config: Dict[str, Any]):
+    return optimization.update_optimization_config(config)
+
+@app.post("/optimization/apply")
+def apply_optimization_action(optimization_id: str):
+    result = optimization.apply_optimization(optimization_id)
+    if not result.get("success"):
+        raise HTTPException(status_code=404, detail=result.get("message"))
+    return result
 
 if __name__ == "__main__":
     import uvicorn
