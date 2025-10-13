@@ -37,18 +37,84 @@ export function Alerts() {
   useEffect(() => {
     const fetchAlerts = async () => {
       try {
+        console.log("🔄 Attempting to fetch alerts from backend...");
         setLoading(true);
-        const response = await fetch('http://localhost:8000/alerts');
         
-        if (!response.ok) throw new Error('Failed to fetch alerts');
+        const response = await fetch('http://localhost:8000/alerts', {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+        
+        if (!response.ok) {
+          throw new Error(`Backend returned ${response.status}`);
+        }
         
         const data = await response.json();
-        setAlerts(data);
+        console.log("✅ Successfully fetched alerts from backend:", data.length, "alerts");
+        
+        // Transform backend data to match frontend Alert interface
+        const transformedAlerts: Alert[] = data.map((alert: any) => ({
+          id: alert.id,
+          type: alert.source as Alert['type'],
+          severity: alert.severity,
+          title: alert.title,
+          description: alert.message,
+          suggestedAction: "Review and take appropriate action",
+          estimatedSavings: alert.affected_resources?.length > 0 ? 245 : undefined,
+          resourceId: alert.affected_resources?.[0] || "",
+          timestamp: alert.timestamp,
+          status: alert.status === "active" ? "Active" : alert.status === "resolved" ? "Resolved" : "In Progress"
+        }));
+        
+        setAlerts(transformedAlerts);
       } catch (error) {
-        console.error('Error fetching alerts:', error);
+        console.error('❌ Failed to fetch from backend:', error);
+        console.log('📦 Using mock data as fallback');
+        
+        // Fallback to mock data when backend is unavailable
+        const mockAlerts: Alert[] = [
+          {
+            id: "alert-1",
+            type: "Cost",
+            severity: "Critical",
+            title: "Idle EC2 Instance Running",
+            description: "EC2 instance i-0123456789 has been idle for 7 days",
+            suggestedAction: "Stop instance or resize to smaller type",
+            estimatedSavings: 245,
+            resourceId: "i-0123456789",
+            timestamp: "2024-01-15T10:30:00Z",
+            status: "Active"
+          },
+          {
+            id: "alert-2",
+            type: "Security",
+            severity: "Critical",
+            title: "RDS Instance Publicly Accessible",
+            description: "RDS instance prod-db is accessible from the internet",
+            suggestedAction: "Remove public access and configure VPC security groups",
+            resourceId: "prod-db",
+            timestamp: "2024-01-15T09:15:00Z",
+            status: "Active"
+          },
+          {
+            id: "alert-3",
+            type: "Performance",
+            severity: "Warning",
+            title: "High Memory Utilization",
+            description: "EC2 instance web-server-1 showing 85% memory usage",
+            suggestedAction: "Scale up instance or optimize application",
+            resourceId: "web-server-1",
+            timestamp: "2024-01-15T08:45:00Z",
+            status: "In Progress"
+          }
+        ];
+        setAlerts(mockAlerts);
+        
         toast({
-          title: "Error Loading Alerts",
-          description: "Failed to fetch alerts. Make sure FastAPI server is running on localhost:8000",
+          title: "Backend Unavailable",
+          description: "Using mock data. Start FastAPI server: cd src/backend && python main.py",
           variant: "destructive"
         });
       } finally {

@@ -48,8 +48,20 @@ export function CostOptimization() {
 
   const fetchOptimizationData = async () => {
     try {
-      const response = await fetch("http://localhost:8000/optimization");
+      console.log("🔄 Attempting to fetch optimization data from backend...");
+      const response = await fetch("http://localhost:8000/optimization", {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Backend returned ${response.status}`);
+      }
+      
       const data = await response.json();
+      console.log("✅ Successfully fetched optimization data from backend");
       
       if (data.config) {
         setIdleResourcesEnabled(data.config.idle_resources_enabled);
@@ -63,10 +75,48 @@ export function CostOptimization() {
         setProjectedSavings(data.projections);
       }
     } catch (error) {
-      console.error("Failed to fetch optimization data:", error);
+      console.error("❌ Failed to fetch from backend:", error);
+      console.log("📦 Using default configuration as fallback");
+      
+      // Use current state values and calculate savings locally
+      const calculateLocalSavings = () => {
+        let monthlySavings = 0;
+        let co2Reduction = 0;
+
+        if (idleResourcesEnabled) {
+          monthlySavings += 245;
+          co2Reduction += 0.8;
+        }
+
+        monthlySavings += (rightSizingLevel[0] / 100) * 400;
+        co2Reduction += (rightSizingLevel[0] / 100) * 1.2;
+
+        if (schedulingEnabled) {
+          monthlySavings += 156;
+          co2Reduction += 0.5;
+        }
+
+        monthlySavings += (autoScalingLevel[0] / 100) * 300;
+        co2Reduction += (autoScalingLevel[0] / 100) * 0.9;
+
+        if (storageOptEnabled) {
+          monthlySavings += 89;
+          co2Reduction += 0.3;
+        }
+
+        return {
+          monthly: Math.round(monthlySavings),
+          yearly: Math.round(monthlySavings * 12),
+          co2: Math.round(co2Reduction * 10) / 10,
+          optimization_score: Math.min(95, Math.round((monthlySavings / 1190) * 100))
+        };
+      };
+      
+      setProjectedSavings(calculateLocalSavings());
+      
       toast({
-        title: "Error",
-        description: "Failed to load optimization data",
+        title: "Backend Unavailable",
+        description: "Using local calculations. Start FastAPI server with: cd src/backend && python main.py",
         variant: "destructive"
       });
     } finally {

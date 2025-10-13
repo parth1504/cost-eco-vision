@@ -56,19 +56,82 @@ export function Resources() {
   useEffect(() => {
     const fetchResources = async () => {
       try {
+        console.log("🔄 Attempting to fetch resources from backend...");
         setLoading(true);
-        const response = await fetch('http://localhost:8000/resources');
         
-        if (!response.ok) throw new Error('Failed to fetch resources');
+        const response = await fetch('http://localhost:8000/resources', {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+        
+        if (!response.ok) {
+          throw new Error(`Backend returned ${response.status}`);
+        }
         
         const data = await response.json();
+        console.log("✅ Successfully fetched resources from backend:", data.length, "resources");
         
-        setResources(data || []);
+        // Transform backend data to match frontend Resource interface
+        const transformedResources: Resource[] = data.map((resource: any) => ({
+          id: resource.id,
+          name: resource.name,
+          type: resource.type as Resource['type'],
+          status: resource.status as Resource['status'],
+          utilization: resource.utilization,
+          monthly_cost: resource.monthly_cost,
+          region: resource.region,
+          recommendations: resource.recommendations,
+          lastActivity: resource.last_activity
+        }));
+        
+        setResources(transformedResources);
       } catch (error) {
-        console.error('Error fetching resources:', error);
+        console.error('❌ Failed to fetch from backend:', error);
+        console.log('📦 Using mock data as fallback');
+        
+        // Fallback to mock data when backend is unavailable
+        const mockResources: Resource[] = [
+          {
+            id: "i-0123456789",
+            name: "web-server-1",
+            type: "EC2",
+            status: "Running",
+            utilization: 15,
+            monthly_cost: 89.50,
+            region: "us-east-1",
+            recommendations: ["Right-size to t3.small", "Enable detailed monitoring"],
+            lastActivity: "2024-01-15T12:00:00Z"
+          },
+          {
+            id: "prod-db",
+            name: "Production Database",
+            type: "RDS",
+            status: "Running",
+            utilization: 67,
+            monthly_cost: 234.00,
+            region: "us-east-1",
+            recommendations: ["Remove public access", "Enable encryption"],
+            lastActivity: "2024-01-15T11:30:00Z"
+          },
+          {
+            id: "backup-bucket",
+            name: "Backup Storage",
+            type: "S3",
+            status: "Optimized",
+            utilization: 0,
+            monthly_cost: 45.20,
+            region: "us-east-1",
+            recommendations: ["Archive old data to Glacier"],
+            lastActivity: "2024-01-14T20:15:00Z"
+          }
+        ];
+        setResources(mockResources);
+        
         toast({
-          title: "Error",
-          description: "Failed to load resources. Make sure FastAPI server is running on localhost:8000",
+          title: "Backend Unavailable",
+          description: "Using mock data. Start FastAPI server: cd src/backend && python main.py",
           variant: "destructive",
         });
       } finally {

@@ -60,14 +60,64 @@ export function Security() {
 
   const fetchSecurityData = async () => {
     try {
-      const response = await fetch("http://localhost:8000/security");
+      console.log("🔄 Attempting to fetch security data from backend...");
+      const response = await fetch("http://localhost:8000/security", {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Backend returned ${response.status}`);
+      }
+      
       const data = await response.json();
+      console.log("✅ Successfully fetched security findings from backend:", data.findings?.length, "findings");
       setFindings(data.findings);
     } catch (error) {
-      console.error("Failed to fetch security data:", error);
+      console.error("❌ Failed to fetch from backend:", error);
+      console.log("📦 Using mock data as fallback");
+      
+      // Fallback to mock data
+      const mockFindings: SecurityFinding[] = [
+        {
+          id: "sec-1",
+          title: "RDS Instance Publicly Accessible",
+          severity: "Critical",
+          description: "Database instance can be accessed from the internet",
+          resource: "prod-db",
+          compliance: ["SOC 2", "ISO 27001", "GDPR"],
+          remediation: "Remove public access and configure VPC security groups",
+          status: "Open"
+        },
+        {
+          id: "sec-2",
+          title: "S3 Bucket Not Encrypted",
+          severity: "High",
+          description: "Sensitive data stored without encryption at rest",
+          resource: "backup-bucket",
+          compliance: ["SOC 2", "HIPAA"],
+          remediation: "Enable AES-256 server-side encryption",
+          estimatedCost: 12,
+          status: "Open"
+        },
+        {
+          id: "sec-3",
+          title: "Overly Permissive Security Group",
+          severity: "Medium",
+          description: "Security group allows inbound traffic from 0.0.0.0/0",
+          resource: "web-sg",
+          compliance: ["CIS Benchmark"],
+          remediation: "Restrict inbound rules to specific IP ranges",
+          status: "In Progress"
+        }
+      ];
+      setFindings(mockFindings);
+      
       toast({
-        title: "Error",
-        description: "Failed to load security data",
+        title: "Backend Unavailable",
+        description: "Using mock data. Start FastAPI server with: cd src/backend && python main.py",
         variant: "destructive"
       });
     } finally {
