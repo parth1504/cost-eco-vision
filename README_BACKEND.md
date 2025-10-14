@@ -44,6 +44,14 @@ This project uses a FastAPI backend to serve mock data for alerts, resources, se
 - `POST /optimization/config` - Update optimization configuration
 - `POST /optimization/apply` - Apply specific optimization
 
+### Notifications
+- `GET /notifications/email?email={email}` - Fetch email notification preferences
+- `PUT /notifications/email?email={email}` - Update email notification settings
+- `POST /notifications/email/send` - Manually send monthly report email
+- `GET /notifications/slack?email={email}` - Fetch Slack notification preferences
+- `PUT /notifications/slack?email={email}` - Update Slack notification settings
+- `POST /notifications/slack/send` - Send test Slack message
+
 ## CORS Configuration
 
 The backend is configured with CORS to allow requests from any origin during development:
@@ -60,6 +68,23 @@ All mock data is defined in the respective module files:
 - `resources.py` - Resource mock data
 - `security.py` - Security findings mock data
 - `optimization.py` - Optimization config and recommendations
+- `notifications.py` - Notification settings and report generation
+
+## Notification Features
+
+### Email Reports
+The backend supports automated monthly email reports that include:
+- Infrastructure overview (resources, utilization metrics, idle resources)
+- Cost optimization summary (savings opportunities, spend trends)
+- Alert analytics (total alerts, resolved, top issues)
+- Security health (vulnerabilities, compliance drift)
+- AI recommendations (top 3 optimization suggestions)
+
+### Slack Integration
+Real-time notifications to Slack channels:
+- Critical alerts with severity, timestamp, and "View Details" link
+- Weekly summaries every Friday with key metrics
+- Test message functionality to verify webhook connection
 
 ## Frontend Fallback
 
