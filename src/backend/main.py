@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Dict, Any, Optional
@@ -7,6 +7,8 @@ import resources
 import security
 import optimization
 import notifications
+from agent_integration.agent_client import StrandsAgentClient
+from agent_integration.agent_logic import AgentLogic
 
 app = FastAPI(title="Cloud Management API")
 
@@ -19,10 +21,47 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Initialize AWS Strands Agent client
+agent_client = StrandsAgentClient()
+agent_logic = AgentLogic()
+
+# Health check endpoint
+@app.get("/")
+def root():
+    return {
+        "status": "online",
+        "message": "Cloud Management API",
+        "agent_configured": agent_client.is_configured()
+    }
+
+@app.get("/health")
+def health_check():
+    return {
+        "status": "healthy",
+        "agent_status": "configured" if agent_client.is_configured() else "not_configured",
+        "agent_details": {
+            "region": agent_client.aws_region if agent_client.is_configured() else None,
+            "agent_id": agent_client.agent_id if agent_client.is_configured() else None
+        }
+    }
+
 # Alerts endpoints
 @app.get("/alerts")
-def get_alerts():
-    return alerts.get_all_alerts()
+def get_alerts(use_agent: bool = Query(False, description="Enable AI-driven insights via AWS Strands Agent")):
+    alerts_data = alerts.get_all_alerts()
+    
+    if use_agent and agent_client.is_configured():
+        # Process through agent
+        prompt = agent_logic.format_alerts_prompt(alerts_data)
+        agent_response = agent_client.invoke_agent(prompt)
+        processed_response = agent_logic.process_agent_response(agent_response, "alerts")
+        
+        return {
+            "alerts": alerts_data,
+            "agent_insights": processed_response
+        }
+    
+    return alerts_data
 
 @app.get("/alerts/{alert_id}")
 def get_alert(alert_id: str):
@@ -47,8 +86,21 @@ def delete_alert(alert_id: str):
 
 # Resources endpoints
 @app.get("/resources")
-def get_resources():
-    return resources.get_all_resources()
+def get_resources(use_agent: bool = Query(False, description="Enable AI-driven insights via AWS Strands Agent")):
+    resources_data = resources.get_all_resources()
+    
+    if use_agent and agent_client.is_configured():
+        # Process through agent
+        prompt = agent_logic.format_resources_prompt(resources_data)
+        agent_response = agent_client.invoke_agent(prompt)
+        processed_response = agent_logic.process_agent_response(agent_response, "resources")
+        
+        return {
+            "resources": resources_data,
+            "agent_insights": processed_response
+        }
+    
+    return resources_data
 
 @app.get("/resources/{resource_id}")
 def get_resource(resource_id: str):
@@ -72,8 +124,22 @@ def optimize_resource(resource_id: str):
 
 # Security endpoints
 @app.get("/security")
-def get_security():
-    return security.get_all_findings()
+def get_security(use_agent: bool = Query(False, description="Enable AI-driven insights via AWS Strands Agent")):
+    security_data = security.get_all_findings()
+    findings = security_data.get("findings", [])
+    
+    if use_agent and agent_client.is_configured():
+        # Process through agent
+        prompt = agent_logic.format_security_prompt(findings)
+        agent_response = agent_client.invoke_agent(prompt)
+        processed_response = agent_logic.process_agent_response(agent_response, "security")
+        
+        return {
+            **security_data,
+            "agent_insights": processed_response
+        }
+    
+    return security_data
 
 @app.get("/security/{finding_id}")
 def get_security_finding(finding_id: str):
@@ -91,8 +157,21 @@ def update_security_finding(finding_id: str, updates: Dict[str, Any]):
 
 # Optimization endpoints
 @app.get("/optimization")
-def get_optimization():
-    return optimization.get_optimization_data()
+def get_optimization(use_agent: bool = Query(False, description="Enable AI-driven insights via AWS Strands Agent")):
+    optimization_data = optimization.get_optimization_data()
+    
+    if use_agent and agent_client.is_configured():
+        # Process through agent
+        prompt = agent_logic.format_optimization_prompt(optimization_data)
+        agent_response = agent_client.invoke_agent(prompt)
+        processed_response = agent_logic.process_agent_response(agent_response, "optimization")
+        
+        return {
+            **optimization_data,
+            "agent_insights": processed_response
+        }
+    
+    return optimization_data
 
 @app.post("/optimization/config")
 def update_optimization(config: Dict[str, Any]):

@@ -14,12 +14,63 @@ This project uses a FastAPI backend to serve mock data for alerts, resources, se
    pip install -r requirements.txt
    ```
 
-3. **Start the FastAPI server:**
+3. **Configure AWS credentials (optional, for agent integration):**
+   ```bash
+   cp .env.example .env
+   # Edit .env with your AWS credentials
+   ```
+
+4. **Start the FastAPI server:**
    ```bash
    python main.py
    ```
 
    The server will start on `http://localhost:8000`
+
+## AWS Strands Agent Integration
+
+All main endpoints now support AI-driven insights via the AWS Strands Agent. Add `?use_agent=true` to any endpoint to enable agent analysis:
+
+### Agent-Enhanced Endpoints
+- `GET /alerts?use_agent=true` - Get alerts with AI severity classification and action summaries
+- `GET /resources?use_agent=true` - Get resources with AI cost-saving recommendations
+- `GET /security?use_agent=true` - Get security findings with AI risk analysis and compliance mapping
+- `GET /optimization?use_agent=true` - Get optimization data with AI multi-factor recommendations
+
+### Agent Response Format
+When `use_agent=true`, responses include an additional `agent_insights` field:
+```json
+{
+  "data": [...],
+  "agent_insights": {
+    "agent_enabled": true,
+    "insights": "Full AI-generated analysis...",
+    "data_type": "alerts|resources|security|optimization",
+    "session_id": "uuid",
+    "recommendations": ["recommendation 1", "recommendation 2", ...]
+  }
+}
+```
+
+### AWS Configuration
+Set the following environment variables in `.env`:
+- `AWS_REGION` - AWS region (default: us-east-1)
+- `AWS_ACCESS_KEY_ID` - Your AWS access key
+- `AWS_SECRET_ACCESS_KEY` - Your AWS secret key
+- `AWS_STRANDS_AGENT_ID` - Your Strands Agent ID
+- `AWS_STRANDS_AGENT_ALIAS_ID` - Agent alias ID (default: TSTALIASID)
+
+### Cost Optimization
+The agent integration uses:
+- **AWS Bedrock Agent Runtime** - Pay per request
+- **AWS Lambda** (optional) - Free tier eligible
+- **DynamoDB** (optional) - For logging and state management
+- **CloudWatch Logs** - For monitoring
+
+Expected costs under normal usage: < $100/month
+
+### Fallback Behavior
+If AWS credentials are not configured or the agent is unavailable, endpoints will return static/mock data as before. The app remains fully functional without AWS integration.
 
 ## Available Endpoints
 
