@@ -1,4 +1,5 @@
 from typing import List, Dict, Any
+from aws import list_ec2_instances
 
 mock_resources: List[Dict[str, Any]] = [
     {
@@ -38,6 +39,9 @@ mock_resources: List[Dict[str, Any]] = [
 
 def get_all_resources():
     return mock_resources
+    resources=list_ec2_instances()
+    print(f"Resources fetched: {resources}")
+    return resources
 
 def get_resource_by_id(resource_id: str):
     return next((resource for resource in mock_resources if resource["id"] == resource_id), None)

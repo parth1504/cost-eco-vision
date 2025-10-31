@@ -20,21 +20,47 @@ session = boto3.Session(
 
 # ---------- EC2 ----------
 def list_ec2_instances():
-    """Fetch all EC2 instances with basic details."""
-    print("Fetching resources from AWS...")
-    ec2 = session.client("ec2")
-    response = ec2.describe_instances()
-    instances = []
-    co
-    for reservation in response.get("Reservations", []):
-        for instance in reservation.get("Instances", []):
-            instances.append({
-                "InstanceId": instance["InstanceId"],
-                "State": instance["State"]["Name"],
-                "Type": instance["InstanceType"],
-                "LaunchTime": instance["LaunchTime"].isoformat()
-            })
-    return instances
+    """Fetch all EC2 instances with enriched structure for UI."""
+    try:
+        print("Fetching EC2 resources from AWS...")
+        ec2 = session.client("ec2")
+        response = ec2.describe_instances()
+        instances = []
+
+        for reservation in response.get("Reservations", []):
+            for instance in reservation.get("Instances", []):
+                instance_id = instance.get("InstanceId")
+                state = instance.get("State", {}).get("Name", "unknown")
+                instance_type = instance.get("InstanceType", "unknown")
+                region = ec2.meta.region_name
+                launch_time = instance.get("LaunchTime")
+                
+                # Extract the Name tag if it exists
+                name_tag = next(
+                    (tag["Value"] for tag in instance.get("Tags", []) if tag["Key"] == "Name"),
+                    "Unnamed-Instance"
+                )
+
+                # Add dummy values for metrics you can later calculate
+                instance_data = {
+                    "id": instance_id,
+                    "name": name_tag,
+                    "type": "EC2",
+                    "status": state.capitalize(),
+                    "utilization": 15,  # Placeholder — can later fetch from CloudWatch
+                    "monthly_cost": 89.50,  # Placeholder — use Cost Explorer API later
+                    "region": region,
+                    "recommendations": ["Right-size to t3.small", "Enable detailed monitoring"], # Placeholder — can later fetch from Agent
+                    "last_activity": launch_time.isoformat() if launch_time else None
+                }
+
+                instances.append(instance_data)
+
+        return instances
+
+    except Exception as e:
+        print(f"Error in list_ec2_instances: {e}")
+        return []
 
 # ---------- S3 ----------
 def list_s3_buckets():
