@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Settings2, Bell, Mail, MessageSquare, Clock, Cloud, Shield, Save } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,11 +27,15 @@ const itemVariants = {
 };
 
 export function Settings() {
+  const { toast } = useToast();
+  
   // Notification Settings
-  const [emailNotificationsEnabled, setEmailNotificationsEnabled] = useState(true);
+  const [emailNotificationsEnabled, setEmailNotificationsEnabled] = useState(false);
   const [slackNotificationsEnabled, setSlackNotificationsEnabled] = useState(false);
   const [criticalAlertsEnabled, setCriticalAlertsEnabled] = useState(true);
-  const [weeklyReportsEnabled, setWeeklyReportsEnabled] = useState(true);
+  const [monthlyReportsEnabled, setMonthlyReportsEnabled] = useState(false);
+  const [criticalAlertsSlack, setCriticalAlertsSlack] = useState(false);
+  const [weeklySlackSummary, setWeeklySlackSummary] = useState(false);
   const [emailAddress, setEmailAddress] = useState("admin@company.com");
   const [slackWebhookUrl, setSlackWebhookUrl] = useState("");
 
@@ -48,13 +52,153 @@ export function Settings() {
   const [gcpIntegrationEnabled, setGcpIntegrationEnabled] = useState(false);
   const [awsRegions, setAwsRegions] = useState("us-east-1,us-west-2");
 
-  const { toast } = useToast();
+  // Loading states
+  const [loading, setLoading] = useState(false);
+  const [sendingReport, setSendingReport] = useState(false);
 
-  const handleSaveSettings = () => {
-    toast({
-      title: "Settings Saved Successfully",
-      description: "Your configuration has been updated and will take effect immediately.",
-    });
+  // Fetch notification settings on mount
+  useEffect(() => {
+    fetchNotificationSettings();
+  }, []);
+
+  const fetchNotificationSettings = async () => {
+    try {
+      const [emailRes, slackRes] = await Promise.all([
+        fetch(`http://localhost:8000/notifications/email?email=${emailAddress}`),
+        fetch(`http://localhost:8000/notifications/slack?email=${emailAddress}`)
+      ]);
+
+      if (emailRes.ok) {
+        const emailData = await emailRes.json();
+        setEmailNotificationsEnabled(emailData.email_enabled || false);
+        setCriticalAlertsEnabled(emailData.critical_alerts_email !== false);
+        setMonthlyReportsEnabled(emailData.monthly_reports_enabled || false);
+      }
+
+      if (slackRes.ok) {
+        const slackData = await slackRes.json();
+        setSlackNotificationsEnabled(slackData.slack_enabled || false);
+        setCriticalAlertsSlack(slackData.critical_alerts_slack || false);
+        setWeeklySlackSummary(slackData.weekly_summary_slack || false);
+        setSlackWebhookUrl(slackData.slack_webhook_url || "");
+      }
+    } catch (error) {
+      console.error("❌ Failed to fetch notification settings:", error);
+    }
+  };
+
+  const handleSaveSettings = async () => {
+    setLoading(true);
+    try {
+      const [emailRes, slackRes] = await Promise.all([
+        fetch(`http://localhost:8000/notifications/email?email=${emailAddress}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email_enabled: emailNotificationsEnabled,
+            critical_alerts_email: criticalAlertsEnabled,
+            monthly_reports_enabled: monthlyReportsEnabled
+          })
+        }),
+        fetch(`http://localhost:8000/notifications/slack?email=${emailAddress}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            slack_enabled: slackNotificationsEnabled,
+            critical_alerts_slack: criticalAlertsSlack,
+            weekly_summary_slack: weeklySlackSummary,
+            slack_webhook_url: slackWebhookUrl
+          })
+        })
+      ]);
+
+      if (emailRes.ok && slackRes.ok) {
+        toast({
+          title: "Settings Saved Successfully",
+          description: "Your configuration has been updated and will take effect immediately.",
+        });
+      } else {
+        throw new Error("Failed to save settings");
+      }
+    } catch (error) {
+      console.error("❌ Error saving settings:", error);
+      toast({
+        title: "Error",
+        description: "Failed to save settings. Please try again.",
+        variant: "destructive"
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSendReportNow = async () => {
+    setSendingReport(true);
+    try {
+      const response = await fetch("http://localhost:8000/notifications/email/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: emailAddress })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log("📧 Report sent:", data);
+        toast({
+          title: "Report Sent Successfully",
+          description: "Monthly report has been sent to your email.",
+        });
+      } else {
+        throw new Error("Failed to send report");
+      }
+    } catch (error) {
+      console.error("❌ Error sending report:", error);
+      toast({
+        title: "Error",
+        description: "Failed to send report. Make sure the backend is running.",
+        variant: "destructive"
+      });
+    } finally {
+      setSendingReport(false);
+    }
+  };
+
+  const handleTestSlack = async () => {
+    if (!slackWebhookUrl) {
+      toast({
+        title: "Error",
+        description: "Please enter a Slack webhook URL first.",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    try {
+      const response = await fetch("http://localhost:8000/notifications/slack/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          webhook_url: slackWebhookUrl,
+          notification_type: "test"
+        })
+      });
+
+      if (response.ok) {
+        toast({
+          title: "Test Message Sent",
+          description: "Check your Slack channel for the test message.",
+        });
+      } else {
+        throw new Error("Failed to send test message");
+      }
+    } catch (error) {
+      console.error("❌ Error sending Slack test:", error);
+      toast({
+        title: "Error",
+        description: "Failed to send test message. Check your webhook URL and backend connection.",
+        variant: "destructive"
+      });
+    }
   };
 
   return (
@@ -136,12 +280,27 @@ export function Settings() {
                       </div>
 
                       <div className="flex items-center justify-between">
-                        <Label htmlFor="weekly-reports">Weekly Reports</Label>
-                        <Switch
-                          id="weekly-reports"
-                          checked={weeklyReportsEnabled}
-                          onCheckedChange={setWeeklyReportsEnabled}
-                        />
+                        <div className="space-y-0.5 flex-1">
+                          <Label htmlFor="monthly-reports">Monthly Reports</Label>
+                          <p className="text-xs text-muted-foreground">
+                            Comprehensive infrastructure reports
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Switch
+                            id="monthly-reports"
+                            checked={monthlyReportsEnabled}
+                            onCheckedChange={setMonthlyReportsEnabled}
+                          />
+                          <Button 
+                            size="sm" 
+                            variant="outline"
+                            onClick={handleSendReportNow}
+                            disabled={sendingReport}
+                          >
+                            {sendingReport ? "Sending..." : "Send Now"}
+                          </Button>
+                        </div>
                       </div>
                     </div>
                   )}
@@ -170,18 +329,52 @@ export function Settings() {
                   </div>
                   
                   {slackNotificationsEnabled && (
-                    <div>
-                      <Label htmlFor="slack-webhook">Webhook URL</Label>
-                      <Input
-                        id="slack-webhook"
-                        placeholder="https://hooks.slack.com/services/..."
-                        value={slackWebhookUrl}
-                        onChange={(e) => setSlackWebhookUrl(e.target.value)}
-                        className="mt-1"
-                      />
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Create a webhook in your Slack workspace settings
-                      </p>
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <Label htmlFor="critical-alerts-slack">Critical Alerts</Label>
+                        <Switch
+                          id="critical-alerts-slack"
+                          checked={criticalAlertsSlack}
+                          onCheckedChange={setCriticalAlertsSlack}
+                        />
+                      </div>
+                      
+                      <div className="flex items-center justify-between">
+                        <div className="space-y-0.5">
+                          <Label htmlFor="weekly-slack">Weekly Summary</Label>
+                          <p className="text-xs text-muted-foreground">
+                            Weekly digest every Friday
+                          </p>
+                        </div>
+                        <Switch
+                          id="weekly-slack"
+                          checked={weeklySlackSummary}
+                          onCheckedChange={setWeeklySlackSummary}
+                        />
+                      </div>
+                      
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <Label htmlFor="slack-webhook">Webhook URL</Label>
+                          <Button 
+                            size="sm" 
+                            variant="outline"
+                            onClick={handleTestSlack}
+                            disabled={!slackWebhookUrl}
+                          >
+                            Test Connection
+                          </Button>
+                        </div>
+                        <Input
+                          id="slack-webhook"
+                          placeholder="https://hooks.slack.com/services/..."
+                          value={slackWebhookUrl}
+                          onChange={(e) => setSlackWebhookUrl(e.target.value)}
+                        />
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Create a webhook in your Slack workspace settings
+                        </p>
+                      </div>
                     </div>
                   )}
                 </CardContent>
@@ -400,9 +593,13 @@ export function Settings() {
 
         {/* Save Button */}
         <div className="flex justify-end pt-6">
-          <Button onClick={handleSaveSettings} className="action-success">
+          <Button 
+            onClick={handleSaveSettings} 
+            className="action-success"
+            disabled={loading}
+          >
             <Save className="h-4 w-4 mr-2" />
-            Save Settings
+            {loading ? "Saving..." : "Save Settings"}
           </Button>
         </div>
       </motion.div>

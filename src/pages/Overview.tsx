@@ -1,11 +1,12 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
+import { toast } from "sonner";
 import { 
   DollarSign, 
   Leaf, 
   TrendingUp, 
   TrendingDown,
-  Activity,
+  Activity as ActivityIcon,
   Server,
   AlertTriangle,
   CheckCircle
@@ -13,8 +14,16 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { mockSavingsData, mockActivities, mockRecommendations } from "@/lib/mockData";
+import { mockSavingsData, mockActivities, mockRecommendations, type Activity, type Recommendation } from "@/lib/mockData";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+
+interface SavingsData {
+  monthly: number;
+  yearly: number;
+  co2Reduced: number;
+  totalOptimizations: number;
+  chartData: { month: string; savings: number }[];
+}
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -32,8 +41,40 @@ const itemVariants = {
 };
 
 export function Overview() {
-  const [recommendations] = useState(mockRecommendations);
-  const [activities] = useState(mockActivities);
+  const [savingsData, setSavingsData] = useState<SavingsData>(mockSavingsData);
+  const [recommendations, setRecommendations] = useState<Recommendation[]>(mockRecommendations);
+  const [activities, setActivities] = useState<Activity[]>(mockActivities);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchOverviewData = async () => {
+      try {
+        const response = await fetch("http://localhost:8000/overview");
+        
+        if (!response.ok) {
+          throw new Error("Failed to fetch overview data");
+        }
+
+        const result = await response.json();
+        const data = result.data;
+
+        setSavingsData(data.savingsData);
+        setActivities(data.activities);
+        setRecommendations(data.recommendations);
+        setIsLoading(false);
+      } catch (error) {
+        console.error("❌ Failed to fetch overview data from backend:", error);
+        console.log("⚠️ Falling back to local mock data");
+        toast.error("Backend server not available", {
+          description: "Using local data. Start the FastAPI server to see live data.",
+        });
+        // Keep using the initial mock data as fallback
+        setIsLoading(false);
+      }
+    };
+
+    fetchOverviewData();
+  }, []);
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-US', {
@@ -74,7 +115,7 @@ export function Overview() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-success">
-              {formatCurrency(mockSavingsData.monthly)}
+              {isLoading ? "..." : formatCurrency(savingsData.monthly)}
             </div>
             <div className="flex items-center space-x-2 text-xs text-muted-foreground">
               <TrendingUp className="h-3 w-3 text-success" />
@@ -91,7 +132,7 @@ export function Overview() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-primary">
-              {formatCurrency(mockSavingsData.yearly)}
+              {isLoading ? "..." : formatCurrency(savingsData.yearly)}
             </div>
             <div className="flex items-center space-x-2 text-xs text-muted-foreground">
               <span>Projected annual savings</span>
@@ -107,7 +148,7 @@ export function Overview() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-eco">
-              {mockSavingsData.co2Reduced} tons
+              {isLoading ? "..." : `${savingsData.co2Reduced} tons`}
             </div>
             <div className="flex items-center space-x-2 text-xs text-muted-foreground">
               <TrendingUp className="h-3 w-3 text-eco" />
@@ -124,7 +165,7 @@ export function Overview() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-foreground">
-              {mockSavingsData.totalOptimizations}
+              {isLoading ? "..." : savingsData.totalOptimizations}
             </div>
             <div className="flex items-center space-x-2 text-xs text-muted-foreground">
               <CheckCircle className="h-3 w-3 text-success" />
@@ -141,7 +182,7 @@ export function Overview() {
           <Card className="chart-container">
             <CardHeader>
               <CardTitle className="flex items-center space-x-2">
-                <Activity className="h-5 w-5" />
+                <ActivityIcon className="h-5 w-5" />
                 <span>Cost Savings Over Time</span>
               </CardTitle>
               <CardDescription>
@@ -151,7 +192,7 @@ export function Overview() {
             <CardContent>
               <div className="h-[300px]">
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={mockSavingsData.chartData}>
+                  <LineChart data={savingsData.chartData}>
                     <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
                     <XAxis dataKey="month" />
                     <YAxis tickFormatter={(value) => `$${value}`} />
@@ -184,7 +225,7 @@ export function Overview() {
           <Card className="dashboard-card h-full">
             <CardHeader>
               <CardTitle className="flex items-center space-x-2">
-                <Activity className="h-5 w-5" />
+                <ActivityIcon className="h-5 w-5" />
                 <span>Recent Actions</span>
               </CardTitle>
               <CardDescription>

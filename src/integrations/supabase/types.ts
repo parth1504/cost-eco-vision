@@ -14,7 +14,132 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      alerts: {
+        Row: {
+          affected_resources: string[] | null
+          created_at: string
+          id: string
+          message: string
+          severity: string
+          source: string
+          status: string
+          timestamp: string
+          title: string
+        }
+        Insert: {
+          affected_resources?: string[] | null
+          created_at?: string
+          id: string
+          message: string
+          severity: string
+          source: string
+          status?: string
+          timestamp?: string
+          title: string
+        }
+        Update: {
+          affected_resources?: string[] | null
+          created_at?: string
+          id?: string
+          message?: string
+          severity?: string
+          source?: string
+          status?: string
+          timestamp?: string
+          title?: string
+        }
+        Relationships: []
+      }
+      notification_settings: {
+        Row: {
+          created_at: string
+          critical_alerts_email: boolean
+          critical_alerts_slack: boolean
+          email_enabled: boolean
+          id: string
+          last_email_sent: string | null
+          monthly_reports_enabled: boolean
+          next_report_date: string | null
+          slack_enabled: boolean
+          slack_webhook_url: string | null
+          updated_at: string
+          user_email: string
+          weekly_summary_slack: boolean
+        }
+        Insert: {
+          created_at?: string
+          critical_alerts_email?: boolean
+          critical_alerts_slack?: boolean
+          email_enabled?: boolean
+          id?: string
+          last_email_sent?: string | null
+          monthly_reports_enabled?: boolean
+          next_report_date?: string | null
+          slack_enabled?: boolean
+          slack_webhook_url?: string | null
+          updated_at?: string
+          user_email: string
+          weekly_summary_slack?: boolean
+        }
+        Update: {
+          created_at?: string
+          critical_alerts_email?: boolean
+          critical_alerts_slack?: boolean
+          email_enabled?: boolean
+          id?: string
+          last_email_sent?: string | null
+          monthly_reports_enabled?: boolean
+          next_report_date?: string | null
+          slack_enabled?: boolean
+          slack_webhook_url?: string | null
+          updated_at?: string
+          user_email?: string
+          weekly_summary_slack?: boolean
+        }
+        Relationships: []
+      }
+      resources: {
+        Row: {
+          created_at: string
+          id: string
+          last_activity: string
+          monthly_cost: number
+          name: string
+          recommendations: string[] | null
+          region: string
+          status: string
+          type: string
+          updated_at: string
+          utilization: number
+        }
+        Insert: {
+          created_at?: string
+          id: string
+          last_activity: string
+          monthly_cost: number
+          name: string
+          recommendations?: string[] | null
+          region: string
+          status: string
+          type: string
+          updated_at?: string
+          utilization: number
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          last_activity?: string
+          monthly_cost?: number
+          name?: string
+          recommendations?: string[] | null
+          region?: string
+          status?: string
+          type?: string
+          updated_at?: string
+          utilization?: number
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
