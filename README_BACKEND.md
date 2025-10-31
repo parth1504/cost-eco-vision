@@ -36,6 +36,7 @@ All main endpoints now support AI-driven insights via the AWS Strands Agent. Add
 - `GET /resources?use_agent=true` - Get resources with AI cost-saving recommendations
 - `GET /security?use_agent=true` - Get security findings with AI risk analysis and compliance mapping
 - `GET /optimization?use_agent=true` - Get optimization data with AI multi-factor recommendations
+- `GET /overview?use_agent=true` - Get overview data with AI insights on savings trends and infrastructure health
 
 ### Agent Response Format
 When `use_agent=true`, responses include an additional `agent_insights` field:
@@ -73,6 +74,9 @@ Expected costs under normal usage: < $100/month
 If AWS credentials are not configured or the agent is unavailable, endpoints will return static/mock data as before. The app remains fully functional without AWS integration.
 
 ## Available Endpoints
+
+### Overview
+- `GET /overview` - Fetch overview data (savings, activities, recommendations)
 
 ### Alerts
 - `GET /alerts` - Fetch all alerts
@@ -115,6 +119,7 @@ allow_headers=["*"]
 ## Mock Data
 
 All mock data is defined in the respective module files:
+- `overview.py` - Overview dashboard data
 - `alerts.py` - Alert mock data
 - `resources.py` - Resource mock data
 - `security.py` - Security findings mock data

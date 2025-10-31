@@ -137,6 +137,30 @@ Provide a strategic optimization roadmap with clear action items."""
         return prompt
     
     @staticmethod
+    def format_overview_prompt(data: Dict[str, Any]) -> str:
+        """
+        Convert overview data into a structured prompt for the agent
+        
+        Args:
+            data: Overview data dictionary with savings, activities, and recommendations
+            
+        Returns:
+            Formatted prompt string
+        """
+        prompt = f"""Analyze the following cloud infrastructure overview data and provide:
+1. Key insights about cost savings trends
+2. Activity pattern analysis
+3. Top priority recommendations
+4. Overall infrastructure health assessment
+
+Overview data:
+{json.dumps(data, indent=2)}
+
+Provide a comprehensive analysis with actionable insights."""
+        
+        return prompt
+    
+    @staticmethod
     def process_agent_response(response: Dict[str, Any], data_type: str) -> Dict[str, Any]:
         """
         Process and structure the agent's response based on data type
