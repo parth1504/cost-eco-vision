@@ -38,7 +38,7 @@ mock_resources: List[Dict[str, Any]] = [
 ]
 
 def get_all_resources():
-    return mock_resources
+    # return mock_resources
     resources=list_ec2_instances()
     print(f"Resources fetched: {resources}")
     return resources

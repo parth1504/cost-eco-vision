@@ -20,9 +20,8 @@ session = boto3.Session(
 
 # ---------- EC2 ----------
 def list_ec2_instances():
-    """Fetch all EC2 instances with enriched structure for UI."""
+    """Fetch all EC2 instances and enrich with recommendations."""
     try:
-        print("Fetching EC2 resources from AWS...")
         ec2 = session.client("ec2")
         response = ec2.describe_instances()
         instances = []
@@ -35,24 +34,29 @@ def list_ec2_instances():
                 region = ec2.meta.region_name
                 launch_time = instance.get("LaunchTime")
                 
-                # Extract the Name tag if it exists
                 name_tag = next(
                     (tag["Value"] for tag in instance.get("Tags", []) if tag["Key"] == "Name"),
                     "Unnamed-Instance"
                 )
 
-                # Add dummy values for metrics you can later calculate
+                utilization = 15  # placeholder
+                cost = 89.5       # placeholder
+
+                # --- Pass only relevant data to recommendation agent ---
                 instance_data = {
                     "id": instance_id,
                     "name": name_tag,
                     "type": "EC2",
                     "status": state.capitalize(),
-                    "utilization": 15,  # Placeholder — can later fetch from CloudWatch
-                    "monthly_cost": 89.50,  # Placeholder — use Cost Explorer API later
+                    "utilization": utilization,
+                    "monthly_cost": cost,
                     "region": region,
-                    "recommendations": ["Right-size to t3.small", "Enable detailed monitoring"], # Placeholder — can later fetch from Agent
                     "last_activity": launch_time.isoformat() if launch_time else None
                 }
+
+                # --- Generate recommendations dynamically ---
+                recommendations = get_recommendations_for_instance(instance_data)
+                instance_data["recommendations"] = recommendations
 
                 instances.append(instance_data)
 
