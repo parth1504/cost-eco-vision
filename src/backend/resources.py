@@ -37,10 +37,12 @@ mock_resources: List[Dict[str, Any]] = [
     }
 ]
 
-def get_all_resources():
+async def get_all_resources():
     # return mock_resources
-    resources=list_ec2_instances()
+    print("Calling list_ec2_instances from aws.py")
+    resources= await list_ec2_instances()
     print(f"Resources fetched: {resources}")
+    print(f"Type of resources: {type(resources)}")
     return resources
 
 def get_resource_by_id(resource_id: str):

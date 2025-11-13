@@ -105,8 +105,9 @@ def delete_alert(alert_id: str):
 
 # Resources endpoints
 @app.get("/resources")
-def get_resources(use_agent: bool = Query(False, description="Enable AI-driven insights via AWS Strands Agent")):
-    resources_data = resources.get_all_resources()
+async def get_resources(use_agent: bool = Query(False, description="Enable AI-driven insights via AWS Strands Agent")):
+    print("Fetching all resources...")
+    resources_data = await resources.get_all_resources()
     
     if use_agent and agent_client.is_configured():
         # Process through agent

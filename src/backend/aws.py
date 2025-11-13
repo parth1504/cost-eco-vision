@@ -2,13 +2,14 @@ import os
 import boto3
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
-
+from recommendations import generate_recommendation
 
 # Load credentials from .env
 load_dotenv()
 
 # Initialize AWS session
 aws_access_key = os.getenv("AWS_ACCESS_KEY_ID")
+print("aws_access_key:", aws_access_key)
 aws_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
 aws_region = os.getenv("AWS_DEFAULT_REGION", "ap-south-1")
 
@@ -19,10 +20,12 @@ session = boto3.Session(
 )
 
 # ---------- EC2 ----------
-def list_ec2_instances():
+async def list_ec2_instances():
     """Fetch all EC2 instances and enrich with recommendations."""
     try:
+        print("session:", session)
         ec2 = session.client("ec2")
+        print("ec2 client:", ec2)
         response = ec2.describe_instances()
         instances = []
 
@@ -55,7 +58,9 @@ def list_ec2_instances():
                 }
 
                 # --- Generate recommendations dynamically ---
-                recommendations = get_recommendations_for_instance(instance_data)
+                print("Generating recommendations for instance:", instance_id)
+                recommendations = await generate_recommendation(instance_data)
+                print("Recommendations for", instance_id, ":", recommendations)
                 instance_data["recommendations"] = recommendations
 
                 instances.append(instance_data)
