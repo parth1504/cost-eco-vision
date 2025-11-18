@@ -1,5 +1,5 @@
 from typing import List, Dict, Any
-from aws import list_ec2_instances
+from aws import list_ec2_instances,list_dynamodb_tables, list_s3_buckets
 
 mock_resources: List[Dict[str, Any]] = [
     {
@@ -39,10 +39,10 @@ mock_resources: List[Dict[str, Any]] = [
 
 async def get_all_resources():
     # return mock_resources
-    print("Calling list_ec2_instances from aws.py")
-    resources= await list_ec2_instances()
-    print(f"Resources fetched: {resources}")
-    print(f"Type of resources: {type(resources)}")
+    ec2_resources= await list_ec2_instances()
+    s3_resources = await list_s3_buckets()
+    dynamo_resources=await list_dynamodb_tables()  
+    resources=ec2_resources + s3_resources + dynamo_resources
     return resources
 
 def get_resource_by_id(resource_id: str):

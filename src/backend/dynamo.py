@@ -9,7 +9,7 @@ dynamodb = boto3.client(
     aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
     aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
 )
-def save_recommendation(resource_id, resource_type, recommendation_text, metrics_snapshot):
+def save_recommendation(resource_id, resource_type, recommendation_text, metrics_snapshot,status='new'):
     from datetime import datetime
 
     item = {

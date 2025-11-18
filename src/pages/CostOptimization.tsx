@@ -475,7 +475,6 @@ export function CostOptimization() {
 
       {/* Advanced AI Features */}
       <CostSentinel />
-      <CapacityOracle />
     </motion.div>
   );
 }
