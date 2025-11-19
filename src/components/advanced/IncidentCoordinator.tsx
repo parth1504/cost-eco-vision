@@ -1,11 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Clock, CheckCircle, AlertTriangle, Activity, FileText, Lightbulb } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { mockIncidentTimeline } from "@/lib/mockData";
 import { useToast } from "@/hooks/use-toast";
 
 const itemVariants = {
@@ -14,17 +13,41 @@ const itemVariants = {
 };
 
 export function IncidentCoordinator() {
-  const [timeline] = useState(mockIncidentTimeline);
-  const [checklist, setChecklist] = useState([
-    { id: "1", task: "Identify root cause", completed: false },
-    { id: "2", task: "Scale affected resources", completed: true },
-    { id: "3", task: "Update monitoring thresholds", completed: false },
-    { id: "4", task: "Notify stakeholders", completed: true },
-    { id: "5", task: "Document incident details", completed: false },
-    { id: "6", task: "Schedule post-incident review", completed: false }
-  ]);
+  const [timeline, setTimeline] = useState<any[]>([]);
+  const [rootCause, setRootCause] = useState<any>(null);
+  const [checklist, setChecklist] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
   const [incidentResolved, setIncidentResolved] = useState(false);
   const { toast } = useToast();
+
+  useEffect(() => {
+    fetchIncidentData();
+  }, []);
+
+  const fetchIncidentData = async () => {
+    try {
+      console.log("🔄 Fetching incident data from backend...");
+      const response = await fetch("http://localhost:8000/incident/data");
+      
+      if (!response.ok) {
+        throw new Error(`Backend returned ${response.status}`);
+      }
+      
+      const data = await response.json();
+      console.log("✅ Successfully fetched incident data:", data);
+      setTimeline(data.timeline);
+      setRootCause(data.rootCause);
+      setChecklist(data.checklist);
+    } catch (error) {
+      console.error("❌ Failed to fetch incident data:", error);
+      // Fallback to empty data
+      setTimeline([]);
+      setRootCause(null);
+      setChecklist([]);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const getSeverityColor = (severity: string) => {
     switch (severity) {
@@ -66,7 +89,11 @@ export function IncidentCoordinator() {
   };
 
   const completedTasks = checklist.filter(item => item.completed).length;
-  const progressPercentage = (completedTasks / checklist.length) * 100;
+  const progressPercentage = checklist.length > 0 ? (completedTasks / checklist.length) * 100 : 0;
+
+  if (loading) {
+    return <div className="text-center text-muted-foreground">Loading incident data...</div>;
+  }
 
   return (
     <div className="space-y-6">
