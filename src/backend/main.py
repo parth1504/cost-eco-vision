@@ -46,6 +46,34 @@ def health_check():
         }
     }
 
+# ============= Incident Coordinator Endpoints =============
+
+@app.get("/incident/data")
+def get_incident():
+    """Get incident room data (timeline, root cause, checklist)"""
+    return get_incident_data()
+
+# ============= Drift Detection Endpoints =============
+
+@app.get("/drift/data")
+def get_drift():
+    """Get infrastructure drift detection data"""
+    return get_drift_data()
+
+# ============= Leaderboard Endpoints =============
+
+@app.get("/leaderboard")
+def get_leaderboard_data():
+    """Get gamified leaderboard data"""
+    return get_leaderboard()
+
+# ============= Security Data Endpoints =============
+
+@app.get("/security/data")
+def get_security_comprehensive():
+    """Get comprehensive security data (keys, scores, compliance, recommendations)"""
+    return get_security_data()
+
 # Overview endpoint
 @app.get("/overview")
 def get_overview(use_agent: bool = Query(False, description="Enable AI-driven insights via AWS Strands Agent")):

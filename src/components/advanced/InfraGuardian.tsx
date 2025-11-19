@@ -1,11 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { GitBranch, AlertTriangle, CheckCircle, ExternalLink, Code2, Settings } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { mockDriftDetections } from "@/lib/mockData";
 import { useToast } from "@/hooks/use-toast";
 
 const itemVariants = {
@@ -14,9 +13,34 @@ const itemVariants = {
 };
 
 export function InfraGuardian() {
-  const [drifts, setDrifts] = useState(mockDriftDetections);
-  const [selectedDrift, setSelectedDrift] = useState<typeof mockDriftDetections[0] | null>(null);
+  const [drifts, setDrifts] = useState<any[]>([]);
+  const [selectedDrift, setSelectedDrift] = useState<any | null>(null);
+  const [loading, setLoading] = useState(true);
   const { toast } = useToast();
+
+  useEffect(() => {
+    fetchDriftData();
+  }, []);
+
+  const fetchDriftData = async () => {
+    try {
+      console.log("🔄 Fetching drift data from backend...");
+      const response = await fetch("http://localhost:8000/drift/data");
+      
+      if (!response.ok) {
+        throw new Error(`Backend returned ${response.status}`);
+      }
+      
+      const data = await response.json();
+      console.log("✅ Successfully fetched drift data:", data);
+      setDrifts(data.drifts);
+    } catch (error) {
+      console.error("❌ Failed to fetch drift data:", error);
+      setDrifts([]);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const getSeverityColor = (severity: string) => {
     switch (severity) {
@@ -51,6 +75,10 @@ export function InfraGuardian() {
       )
     });
   };
+
+  if (loading) {
+    return <div className="text-center text-muted-foreground">Loading drift detection data...</div>;
+  }
 
   return (
     <div className="space-y-6">
