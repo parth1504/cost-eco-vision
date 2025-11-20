@@ -133,7 +133,7 @@ export function Resources() {
         
         toast({
           title: "Backend Unavailable",
-          description: "Using mock data. Start FastAPI server: cd src/backend && python main.py",
+          description: "restart server to fetch live data",
           variant: "destructive",
         });
       } finally {
@@ -302,7 +302,11 @@ export function Resources() {
                     {/* Utilization */}
                     <div>
                       <div className="flex justify-between text-sm mb-2">
-                        <span className="text-muted-foreground">Utilization</span>
+                        <span className="text-muted-foreground">
+                          {resource.type === "EC2" && "CPU Utilization"}
+                          {resource.type === "S3" && "Bucket Storage Utilization"}
+                          {resource.type === "DynamoDB" && "Consumed Capacity"}
+                        </span>
                         <span className="font-medium">{resource.utilization}%</span>
                       </div>
                       <Progress 
@@ -407,7 +411,11 @@ export function Resources() {
                   <CardContent>
                     <div className="space-y-3">
                       <div className="flex justify-between text-sm">
-                        <span>CPU Utilization</span>
+                        <span >
+                          {selectedResource.type === "EC2" && "CPU Utilization"}
+                          {selectedResource.type === "S3" && "Bucket Storage Utilization"}
+                          {selectedResource.type === "DynamoDB" && "Consumed Capacity"}
+                        </span>
                         <span className="font-medium">{selectedResource.utilization}%</span>
                       </div>
                       <Progress value={selectedResource.utilization} className="h-3" />

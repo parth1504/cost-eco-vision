@@ -16,7 +16,7 @@ export interface Alert {
 export interface Resource {
   id: string;
   name: string;
-  type: "EC2" | "RDS" | "S3" | "Lambda" | "ELB";
+  type: "EC2" | "RDS" | "S3" | "Lambda" | "ELB" | "DynamoDB";
   status: "Running" | "Idle" | "Stopped" | "Optimized";
   utilization: number;
   monthly_cost: number;
@@ -56,6 +56,54 @@ export interface SecurityFinding {
   remediation: string;
   estimatedCost?: number;
   status: "Open" | "Fixed" | "In Progress";
+}
+
+export interface LeaderboardEntry {
+  id: string;
+  team: string;
+  user: string;
+  savings: number;
+  optimizations: number;
+  rank: number;
+}
+
+export interface DriftDetection {
+  id: string;
+  resource: string;
+  resourceType: string;
+  driftType: "Configuration" | "Security" | "Compliance";
+  severity: "Critical" | "High" | "Medium" | "Low";
+  actualValue: string;
+  expectedValue: string;
+  lastSync: string;
+}
+
+export interface CapacityForecast {
+  resource: string;
+  metric: "CPU" | "Memory" | "Storage" | "Network";
+  current: number;
+  predicted: number;
+  timeframe: string;
+  confidence: number;
+  status: "Normal" | "Warning" | "Critical";
+}
+
+export interface IncidentEvent {
+  id: string;
+  timestamp: string;
+  type: "Alert" | "Log" | "Metric" | "Action";
+  source: string;
+  message: string;
+  severity: "Info" | "Warning" | "Critical";
+}
+
+export interface SecurityKey {
+  id: string;
+  name: string;
+  type: "API Key" | "Service Account" | "SSH Key" | "Certificate";
+  lastUsed: string;
+  expiresIn: number; // days
+  status: "Active" | "Unused" | "Expired";
 }
 
 // Mock data
@@ -245,53 +293,6 @@ export const mockSavingsData = {
 };
 
 // New advanced AI-agent features data
-export interface LeaderboardEntry {
-  id: string;
-  team: string;
-  user: string;
-  savings: number;
-  optimizations: number;
-  rank: number;
-}
-
-export interface DriftDetection {
-  id: string;
-  resource: string;
-  resourceType: string;
-  driftType: "Configuration" | "Security" | "Compliance";
-  severity: "Critical" | "High" | "Medium" | "Low";
-  actualValue: string;
-  expectedValue: string;
-  lastSync: string;
-}
-
-export interface CapacityForecast {
-  resource: string;
-  metric: "CPU" | "Memory" | "Storage" | "Network";
-  current: number;
-  predicted: number;
-  timeframe: string;
-  confidence: number;
-  status: "Normal" | "Warning" | "Critical";
-}
-
-export interface IncidentEvent {
-  id: string;
-  timestamp: string;
-  type: "Alert" | "Log" | "Metric" | "Action";
-  source: string;
-  message: string;
-  severity: "Info" | "Warning" | "Critical";
-}
-
-export interface SecurityKey {
-  id: string;
-  name: string;
-  type: "API Key" | "Service Account" | "SSH Key" | "Certificate";
-  lastUsed: string;
-  expiresIn: number; // days
-  status: "Active" | "Unused" | "Expired";
-}
 
 export const mockLeaderboard: LeaderboardEntry[] = [
   {
@@ -361,35 +362,7 @@ export const mockDriftDetections: DriftDetection[] = [
   }
 ];
 
-export const mockCapacityForecasts: CapacityForecast[] = [
-  {
-    resource: "web-cluster",
-    metric: "CPU",
-    current: 67,
-    predicted: 89,
-    timeframe: "Next 4 hours",
-    confidence: 92,
-    status: "Warning"
-  },
-  {
-    resource: "database-main",
-    metric: "Memory",
-    current: 78,
-    predicted: 95,
-    timeframe: "Next 2 hours", 
-    confidence: 88,
-    status: "Critical"
-  },
-  {
-    resource: "cache-cluster",
-    metric: "CPU",
-    current: 45,
-    predicted: 52,
-    timeframe: "Next 6 hours",
-    confidence: 85,
-    status: "Normal"
-  }
-];
+
 
 export const mockIncidentTimeline: IncidentEvent[] = [
   {
@@ -467,3 +440,34 @@ export const mockSecurityScore = {
     { day: "Sun", score: 87 }
   ]
 };
+
+
+export const mockCapacityForecasts: CapacityForecast[] = [
+  {
+    resource: "web-cluster",
+    metric: "CPU",
+    current: 67,
+    predicted: 89,
+    timeframe: "Next 4 hours",
+    confidence: 92,
+    status: "Warning"
+  },
+  {
+    resource: "database-main",
+    metric: "Memory",
+    current: 78,
+    predicted: 95,
+    timeframe: "Next 2 hours", 
+    confidence: 88,
+    status: "Critical"
+  },
+  {
+    resource: "cache-cluster",
+    metric: "CPU",
+    current: 45,
+    predicted: 52,
+    timeframe: "Next 6 hours",
+    confidence: 85,
+    status: "Normal"
+  }
+];

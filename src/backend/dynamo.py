@@ -54,4 +54,3 @@ def is_in_cooldown(item):
     cooldown = timedelta(seconds=item.get('cooldown_seconds', 86400))
     return datetime.utcnow() < last_time + cooldown
 
-print(dynamodb.list_tables())
