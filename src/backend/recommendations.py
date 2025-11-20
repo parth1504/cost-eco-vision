@@ -2,6 +2,8 @@
 from typing import Dict
 from dynamo import save_recommendation, get_recommendation, is_in_cooldown
 from bedrock_client import call_bedrock_json  # your thin wrapper returning dict
+from recos import extract_json_from_payload, attach_cli_command, DEFAULT_RECO
+
 
 SYSTEM = (
  "You are a cloud optimization assistant. "
@@ -10,6 +12,7 @@ SYSTEM = (
 )
 
 async def generate_recommendation(instance: Dict) -> Dict:
+    print("Generating recommendation for instance:", instance["id"])
     payload = {
         "id": instance["id"],
         "type": instance.get("type","EC2"),
@@ -19,7 +22,30 @@ async def generate_recommendation(instance: Dict) -> Dict:
         "cost_month": instance.get("cost"),
         "instance_type": instance.get("instance_type"),
     }
-    return call_bedrock_json(system=SYSTEM, user_json=payload)
+
+    raw = call_bedrock_json(instance)   # raw Bedrock output string
+    print("Type of raw: ",type(raw))
+    print("Raw ", raw)
+    if isinstance(raw, dict):
+        parsed = raw
+    else:
+        parsed = extract_json_from_payload(raw)
+
+    if not parsed:
+        parsed = DEFAULT_RECO.copy()
+    else:
+        tmp = DEFAULT_RECO.copy()
+        tmp.update(parsed)
+        parsed = tmp
+
+    # attach CLI command
+    parsed = attach_cli_command(parsed, instance["id"])
+
+    instance["recommendation"] = parsed
+    print("Final recommendation:", instance)
+
+
+    return call_bedrock_json(user_json=payload)
 
 def upsert_recommendation(instance: Dict) -> Dict:
     rid = instance["id"]; rtype = instance.get("type","EC2")

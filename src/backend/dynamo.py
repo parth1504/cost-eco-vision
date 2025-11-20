@@ -33,7 +33,7 @@ def get_recommendation(resource_id, resource_type):
     )
     return response.get('Item')
 def update_recommendation_status(resource_id, resource_type, new_status):
-    response = recommendations_table.update_item(
+    response = recommendations.update_item(
         Key={
             'resource_id': resource_id,
             'resource_type': resource_type

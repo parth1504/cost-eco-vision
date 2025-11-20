@@ -25,7 +25,7 @@ async def list_ec2_instances():
         ec2 = session.client("ec2")
         response = ec2.describe_instances()
         instances = []
-        recommendations=["Right-size to t3.small", "Enable detailed monitoring"]
+        #recommendations=["Right-size to t3.small", "Enable detailed monitoring"]
 
         for reservation in response.get("Reservations", []):
             for instance in reservation.get("Instances", []):
@@ -56,7 +56,7 @@ async def list_ec2_instances():
                 }
                 ##Uncomment below to enable dynamic recommendation generation
                 # print("Generating recommendations for instance:", instance_id)
-                # recommendations = await generate_recommendation(instance_data)
+                recommendations = await generate_recommendation(instance_data)
                 # print("Recommendations for", instance_id, ":", recommendations)
                 instance_data["recommendations"] = recommendations
 
@@ -75,7 +75,7 @@ async def list_s3_buckets():
         s3 = session.client("s3")
         response = s3.list_buckets()
         buckets = []
-        recommendations=["Archive old data to Glacier"]
+        #recommendations=["Archive old data to Glacier"]
         for bucket in response.get("Buckets", []):
             name = bucket.get("Name")
             creation_date = bucket.get("CreationDate")
@@ -101,12 +101,12 @@ async def list_s3_buckets():
                 "last_activity": creation_date.isoformat() if creation_date else None,
             }
 
-            # print("Generating recommendations for S3 bucket:", name)
-            # try:
-            #     recommendations = await generate_recommendation(bucket_data)
-            # except Exception as e:
-            #     print(f"Recommendation generation failed for bucket {name}: {e}")
-            #     recommendations = []
+            print("Generating recommendations for S3 bucket:", name)
+            try:
+                recommendations = await generate_recommendation(bucket_data)
+            except Exception as e:
+                print(f"Recommendation generation failed for bucket {name}: {e}")
+                recommendations = []
 
             bucket_data["recommendations"] = recommendations
             buckets.append(bucket_data)
@@ -125,7 +125,7 @@ async def list_dynamodb_tables():
         response = dynamodb.list_tables()
         table_names = response.get("TableNames", [])
         tables = []
-        recommendations=["Remove public access", "Enable encryption"]
+        #recommendations=["Remove public access", "Enable encryption"]
 
         for name in table_names:
             try:
@@ -157,11 +157,11 @@ async def list_dynamodb_tables():
             }
 
             # print("Generating recommendations for DynamoDB table:", name)
-            # try:
-            #     recommendations = await generate_recommendation(table_data)
-            # except Exception as e:
-            #     print(f"Recommendation generation failed for table {name}: {e}")
-            #     recommendations = []
+            try:
+                 recommendations = await generate_recommendation(table_data)
+            except Exception as e:
+                 print(f"Recommendation generation failed for table {name}: {e}")
+                 recommendations = []
 
             table_data["recommendations"] = recommendations
             tables.append(table_data)
