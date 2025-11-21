@@ -50,6 +50,7 @@ def root():
 async def get_resources(use_agent: bool = Query(False, description="Enable AI-driven insights via AWS Strands Agent")):
     print("Fetching all resources...")
     resources_data = await resources.get_all_resources() ##from aws
+
     return resources_data
 
 @app.get("/resources/{resource_id}")
