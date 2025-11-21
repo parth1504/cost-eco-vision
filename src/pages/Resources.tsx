@@ -1,14 +1,20 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Server, Database, HardDrive, Zap, BarChart3, DollarSign, TrendingUp, Settings2 } from "lucide-react";
+import { Server, Database, HardDrive, Zap, BarChart3, DollarSign, TrendingUp, Settings2, Calendar, Clock } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar as CalendarComponent } from "@/components/ui/calendar";
+import { format } from "date-fns";
 import { Resource } from "@/lib/mockData";
 import { useToast } from "@/hooks/use-toast";
 import { InfraGuardian } from "@/components/advanced/InfraGuardian";
+import { cn } from "@/lib/utils";
 // Removed Supabase import - now using FastAPI
 
 const containerVariants = {
@@ -50,6 +56,10 @@ export function Resources() {
   const [resources, setResources] = useState<Resource[]>([]);
   const [selectedResource, setSelectedResource] = useState<Resource | null>(null);
   const [loading, setLoading] = useState(true);
+  const [maintenanceType, setMaintenanceType] = useState<string>("");
+  const [maintenanceDate, setMaintenanceDate] = useState<Date>();
+  const [recurrence, setRecurrence] = useState<string>("");
+  const [maintenanceSuccess, setMaintenanceSuccess] = useState(false);
   const { toast } = useToast();
 
   // Fetch resources from FastAPI backend
@@ -177,6 +187,25 @@ export function Resources() {
         variant: "destructive",
       });
     }
+  };
+
+  const handleScheduleMaintenance = () => {
+    if (!maintenanceType || !maintenanceDate || !recurrence) {
+      toast({
+        title: "Missing Information",
+        description: "Please fill in all maintenance details",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setMaintenanceSuccess(true);
+    setTimeout(() => setMaintenanceSuccess(false), 3000);
+
+    toast({
+      title: "Maintenance Scheduled",
+      description: `${maintenanceType} scheduled for ${format(maintenanceDate, "PPP")} (${recurrence})`,
+    });
   };
 
   const totalMonthlyCost = resources.reduce((sum, r) => sum + r.monthly_cost, 0);
@@ -350,8 +379,16 @@ export function Resources() {
       </motion.div>
 
       {/* Resource Detail Modal */}
-      <Dialog open={!!selectedResource} onOpenChange={(open) => !open && setSelectedResource(null)}>
-        <DialogContent className="max-w-2xl">
+      <Dialog open={!!selectedResource} onOpenChange={(open) => {
+        if (!open) {
+          setSelectedResource(null);
+          setMaintenanceSuccess(false);
+          setMaintenanceType("");
+          setMaintenanceDate(undefined);
+          setRecurrence("");
+        }
+      }}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           {selectedResource && (
             <>
               <DialogHeader>
@@ -371,99 +408,200 @@ export function Resources() {
                 </div>
               </DialogHeader>
 
-              <div className="space-y-6">
-                {/* Status and Metrics */}
-                <div className="grid grid-cols-2 gap-4">
-                  <Card>
-                    <CardContent className="p-4">
-                      <div className="text-center">
-                        <p className="text-sm text-muted-foreground">Status</p>
-                        <Badge className={`${getStatusColor(selectedResource.status)} mt-2`}>
-                          {selectedResource.status}
-                        </Badge>
-                      </div>
-                    </CardContent>
-                  </Card>
+              <Tabs defaultValue="optimize" className="w-full">
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="optimize">Apply Optimization</TabsTrigger>
+                  <TabsTrigger value="maintenance">Schedule Maintenance</TabsTrigger>
+                </TabsList>
 
-                  <Card>
-                    <CardContent className="p-4">
-                      <div className="text-center">
-                        <p className="text-sm text-muted-foreground">Monthly Cost</p>
-                        <p className="text-2xl font-bold text-foreground mt-1">
-                          ${selectedResource.monthly_cost.toFixed(2)}
-                        </p>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
-
-                {/* Utilization Chart */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-base">Resource Utilization</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-3">
-                      <div className="flex justify-between text-sm">
-                        <span>CPU Utilization</span>
-                        <span className="font-medium">{selectedResource.utilization}%</span>
-                      </div>
-                      <Progress value={selectedResource.utilization} className="h-3" />
-                      
-                      <div className="text-xs text-muted-foreground">
-                        Last updated: {new Date(selectedResource.lastActivity).toLocaleString()}
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                {/* AI Recommendations */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-base flex items-center space-x-2">
-                      <Settings2 className="h-4 w-4" />
-                      <span>AI Recommendations</span>
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-3">
-                      {selectedResource.recommendations.map((rec, index) => (
-                        <div key={index} className="flex items-start space-x-3 p-3 bg-muted/30 rounded-lg">
-                          <div className="h-2 w-2 bg-primary rounded-full mt-2 flex-shrink-0" />
-                          <div className="flex-1">
-                            <p className="text-sm font-medium text-foreground">{rec}</p>
-                            <p className="text-xs text-muted-foreground mt-1">
-                              Estimated savings: ${Math.round(selectedResource.monthly_cost * 0.3)}/month
-                            </p>
-                          </div>
+                <TabsContent value="optimize" className="space-y-6 mt-6">
+                  {/* Status and Metrics */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <Card>
+                      <CardContent className="p-4">
+                        <div className="text-center">
+                          <p className="text-sm text-muted-foreground">Status</p>
+                          <Badge className={`${getStatusColor(selectedResource.status)} mt-2`}>
+                            {selectedResource.status}
+                          </Badge>
                         </div>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
+                      </CardContent>
+                    </Card>
 
-                {/* Actions */}
-                <div className="flex space-x-3">
-                  {selectedResource.status !== 'Optimized' ? (
-                    <>
-                      <Button
-                        onClick={() => handleOptimize(selectedResource.id, "Right-sizing")}
-                        className="flex-1 action-success"
-                      >
-                        Apply Optimization
-                      </Button>
-                      <Button variant="outline" className="flex-1">
-                        Schedule Maintenance
-                      </Button>
-                    </>
-                  ) : (
-                    <div className="flex items-center justify-center space-x-2 text-eco py-2">
-                      <TrendingUp className="h-5 w-5" />
-                      <span className="font-medium">Resource Optimized</span>
-                    </div>
+                    <Card>
+                      <CardContent className="p-4">
+                        <div className="text-center">
+                          <p className="text-sm text-muted-foreground">Monthly Cost</p>
+                          <p className="text-2xl font-bold text-foreground mt-1">
+                            ${selectedResource.monthly_cost.toFixed(2)}
+                          </p>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+
+                  {/* Utilization Chart */}
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base">Resource Utilization</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-3">
+                        <div className="flex justify-between text-sm">
+                          <span>CPU Utilization</span>
+                          <span className="font-medium">{selectedResource.utilization}%</span>
+                        </div>
+                        <Progress value={selectedResource.utilization} className="h-3" />
+                        
+                        <div className="text-xs text-muted-foreground">
+                          Last updated: {new Date(selectedResource.lastActivity).toLocaleString()}
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  {/* AI Recommendations */}
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base flex items-center space-x-2">
+                        <Settings2 className="h-4 w-4" />
+                        <span>AI Recommendations</span>
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-3">
+                        {selectedResource.recommendations.map((rec, index) => (
+                          <div key={index} className="flex items-start space-x-3 p-3 bg-muted/30 rounded-lg">
+                            <div className="h-2 w-2 bg-primary rounded-full mt-2 flex-shrink-0" />
+                            <div className="flex-1">
+                              <p className="text-sm font-medium text-foreground">{rec}</p>
+                              <p className="text-xs text-muted-foreground mt-1">
+                                Estimated savings: ${Math.round(selectedResource.monthly_cost * 0.3)}/month
+                              </p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  {/* Actions */}
+                  <div className="flex space-x-3">
+                    {selectedResource.status !== 'Optimized' ? (
+                      <>
+                        <Button
+                          onClick={() => handleOptimize(selectedResource.id, "Right-sizing")}
+                          className="flex-1 action-success"
+                        >
+                          Apply Optimization
+                        </Button>
+                      </>
+                    ) : (
+                      <div className="flex items-center justify-center space-x-2 text-eco py-2">
+                        <TrendingUp className="h-5 w-5" />
+                        <span className="font-medium">Resource Optimized</span>
+                      </div>
+                    )}
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="maintenance" className="space-y-6 mt-6">
+                  {maintenanceSuccess && (
+                    <Card className="border-success bg-success/10">
+                      <CardContent className="p-4">
+                        <div className="flex items-center space-x-2 text-success">
+                          <div className="h-5 w-5 rounded-full bg-success flex items-center justify-center">
+                            <span className="text-white text-xs">✓</span>
+                          </div>
+                          <span className="font-medium">Maintenance Scheduled Successfully</span>
+                        </div>
+                      </CardContent>
+                    </Card>
                   )}
-                </div>
-              </div>
+
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base flex items-center space-x-2">
+                        <Calendar className="h-4 w-4" />
+                        <span>Schedule Maintenance Window</span>
+                      </CardTitle>
+                      <CardDescription>
+                        Plan maintenance activities for {selectedResource.name}
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      {/* Maintenance Type */}
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-foreground">Maintenance Type</label>
+                        <Select value={maintenanceType} onValueChange={setMaintenanceType}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select maintenance type" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="restart">Restart Instance</SelectItem>
+                            <SelectItem value="stop-start">Stop & Start Cycle</SelectItem>
+                            <SelectItem value="patch">Apply Patch (Mock)</SelectItem>
+                            <SelectItem value="health-check">Run Health Check</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {/* Date-Time Picker */}
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-foreground">Execution Time</label>
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <Button
+                              variant="outline"
+                              className={cn(
+                                "w-full justify-start text-left font-normal",
+                                !maintenanceDate && "text-muted-foreground"
+                              )}
+                            >
+                              <Clock className="mr-2 h-4 w-4" />
+                              {maintenanceDate ? format(maintenanceDate, "PPP") : "Pick a date"}
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-auto p-0" align="start">
+                            <CalendarComponent
+                              mode="single"
+                              selected={maintenanceDate}
+                              onSelect={setMaintenanceDate}
+                              disabled={(date) => date < new Date()}
+                              initialFocus
+                              className="pointer-events-auto"
+                            />
+                          </PopoverContent>
+                        </Popover>
+                      </div>
+
+                      {/* Recurrence */}
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-foreground">Recurrence</label>
+                        <Select value={recurrence} onValueChange={setRecurrence}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select recurrence" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="one-time">One-Time</SelectItem>
+                            <SelectItem value="daily">Daily</SelectItem>
+                            <SelectItem value="weekly">Weekly</SelectItem>
+                            <SelectItem value="monthly">Monthly</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {/* Save Button */}
+                      <Button 
+                        onClick={handleScheduleMaintenance}
+                        className="w-full"
+                      >
+                        Save Maintenance Window
+                      </Button>
+                    </CardContent>
+                  </Card>
+                </TabsContent>
+              </Tabs>
             </>
           )}
         </DialogContent>
