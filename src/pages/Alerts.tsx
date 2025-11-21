@@ -359,7 +359,20 @@ export function Alerts() {
                         </div>
                       </td>
                       <td>
-                        <Badge variant="outline">{alert.type}</Badge>
+                        <div className="flex items-center space-x-2">
+                          <Badge variant="outline">{alert.type}</Badge>
+                          {alert.provider && (
+                            <Badge 
+                              className={`text-xs ${
+                                alert.provider === 'AWS' ? 'bg-yellow-500/10 text-yellow-700 dark:text-yellow-400 border-yellow-500/20' :
+                                alert.provider === 'GCP' ? 'bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-500/20' :
+                                'bg-purple-500/10 text-purple-700 dark:text-purple-400 border-purple-500/20'
+                              }`}
+                            >
+                              {alert.provider}
+                            </Badge>
+                          )}
+                        </div>
                       </td>
                       <td>
                         <Badge className={getSeverityColor(alert.severity)}>

@@ -93,7 +93,9 @@ export function Resources() {
           monthly_cost: resource.monthly_cost,
           region: resource.region,
           recommendations: resource.recommendations,
-          lastActivity: resource.last_activity
+          lastActivity: resource.last_activity,
+          provider: resource.provider,
+          commands: resource.commands
         }));
         
         setResources(transformedResources);
@@ -315,7 +317,20 @@ export function Resources() {
                           <IconComponent className="h-5 w-5 text-primary" />
                         </div>
                         <div>
-                          <CardTitle className="text-base">{resource.name}</CardTitle>
+                          <div className="flex items-center space-x-2">
+                            <CardTitle className="text-base">{resource.name}</CardTitle>
+                            {resource.provider && (
+                              <Badge 
+                                className={`text-xs ${
+                                  resource.provider === 'AWS' ? 'bg-yellow-500/10 text-yellow-700 dark:text-yellow-400 border-yellow-500/20' :
+                                  resource.provider === 'GCP' ? 'bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-500/20' :
+                                  'bg-purple-500/10 text-purple-700 dark:text-purple-400 border-purple-500/20'
+                                }`}
+                              >
+                                {resource.provider}
+                              </Badge>
+                            )}
+                          </div>
                           <CardDescription>{resource.type} • {resource.region}</CardDescription>
                         </div>
                       </div>
@@ -392,18 +407,33 @@ export function Resources() {
           {selectedResource && (
             <>
               <DialogHeader>
-                <div className="flex items-center space-x-3">
-                  <div className="p-2 bg-primary/10 rounded-lg">
-                    {(() => {
-                      const IconComponent = getResourceIcon(selectedResource.type);
-                      return <IconComponent className="h-6 w-6 text-primary" />;
-                    })()}
-                  </div>
-                  <div>
-                    <DialogTitle>{selectedResource.name}</DialogTitle>
-                    <DialogDescription>
-                      {selectedResource.type} instance in {selectedResource.region}
-                    </DialogDescription>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-3">
+                    <div className="p-2 bg-primary/10 rounded-lg">
+                      {(() => {
+                        const IconComponent = getResourceIcon(selectedResource.type);
+                        return <IconComponent className="h-6 w-6 text-primary" />;
+                      })()}
+                    </div>
+                    <div>
+                      <div className="flex items-center space-x-2">
+                        <DialogTitle>{selectedResource.name}</DialogTitle>
+                        {selectedResource.provider && (
+                          <Badge 
+                            className={`text-xs ${
+                              selectedResource.provider === 'AWS' ? 'bg-yellow-500/10 text-yellow-700 dark:text-yellow-400 border-yellow-500/20' :
+                              selectedResource.provider === 'GCP' ? 'bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-500/20' :
+                              'bg-purple-500/10 text-purple-700 dark:text-purple-400 border-purple-500/20'
+                            }`}
+                          >
+                            {selectedResource.provider}
+                          </Badge>
+                        )}
+                      </div>
+                      <DialogDescription>
+                        {selectedResource.type} instance in {selectedResource.region}
+                      </DialogDescription>
+                    </div>
                   </div>
                 </div>
               </DialogHeader>
@@ -482,6 +512,32 @@ export function Resources() {
                           </div>
                         ))}
                       </div>
+                    </CardContent>
+                  </Card>
+
+                  {/* Steps the agent will run */}
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base">Steps the agent will run</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      {selectedResource.commands && selectedResource.commands.length > 0 ? (
+                        <div className="space-y-3">
+                          {selectedResource.commands.map((cmd, index) => (
+                            <div key={index} className="p-3 bg-muted/30 rounded-lg space-y-2">
+                              <div className="flex items-center space-x-2">
+                                <span className="text-xs font-semibold text-primary">Step {cmd.step}</span>
+                                <span className="text-sm font-medium text-foreground">{cmd.title}</span>
+                              </div>
+                              <code className="block text-xs bg-muted px-3 py-2 rounded font-mono text-muted-foreground">
+                                {cmd.command}
+                              </code>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">No automated steps available.</p>
+                      )}
                     </CardContent>
                   </Card>
 
