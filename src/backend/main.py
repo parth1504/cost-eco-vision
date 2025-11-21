@@ -1,6 +1,9 @@
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query,Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Body
+from dynamo import get_resource_from_db, save_resource_in_db
+from decimal import Decimal
 from typing import Dict, Any, Optional
 import alerts
 import resources
@@ -8,6 +11,11 @@ import security
 import optimization
 import notifications
 import overview
+from incident import get_incident_data
+from drift import get_drift_data
+from leaderboard import get_leaderboard
+from security import get_security_data
+
 from agent_integration.agent_client import StrandsAgentClient
 from agent_integration.agent_logic import AgentLogic
 
@@ -26,6 +34,7 @@ app.add_middleware(
 agent_client = StrandsAgentClient()
 agent_logic = AgentLogic()
 
+
 # Health check endpoint
 @app.get("/")
 def root():
@@ -34,6 +43,65 @@ def root():
         "message": "Cloud Management API",
         "agent_configured": agent_client.is_configured()
     }
+
+
+# Resources endpoints
+@app.get("/resources")
+async def get_resources(use_agent: bool = Query(False, description="Enable AI-driven insights via AWS Strands Agent")):
+    print("Fetching all resources...")
+    resources_data = await resources.get_all_resources() ##from aws
+    return resources_data
+
+@app.get("/resources/{resource_id}")
+def get_resource(resource_id: str,data: dict = Body(...)):
+    print("Fetching resource:", resource_id)
+    resource_type = data.get("resource_type")
+    resource = resources.get_resource_by_id(resource_id,resource_type)
+    if not resource:
+        raise HTTPException(status_code=404, detail="Resource not found")
+    return resource
+
+
+def decimal_to_float(obj):
+    """Convert DynamoDB Decimal types → float safely."""
+    if isinstance(obj, Decimal):
+        return float(obj)
+    if isinstance(obj, dict):
+        return {k: decimal_to_float(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [decimal_to_float(v) for v in obj]
+    return obj
+
+
+@app.put("/resources/{resource_id}/optimize")
+def optimize_resource_api(resource_id: str, data: dict = Body(...)):
+    resource_type = data.get("resource_type")
+
+    if not resource_type:
+        raise HTTPException(status_code=400, detail="resource_type is required")
+
+    # Fetch stored resource from DynamoDB
+    resource = get_resource_from_db(resource_id, resource_type)
+    print("Optimizing resource:", resource)
+
+    if not resource:
+        raise HTTPException(status_code=404, detail="Resource not found in DynamoDB")
+
+    # Apply optimization
+    resource["is_optimized"] = True
+    resource["recommendations"] = []
+
+    # Save updated resource back to DynamoDB
+    save_resource_in_db(
+    resource_id=resource_id,
+    resource_type=resource_type,
+    resource_data=resource   
+)
+
+    # Convert Decimal → float before returning to frontend
+    cleaned_resource = decimal_to_float(resource)
+
+    return cleaned_resource
 
 @app.get("/health")
 def health_check():
@@ -131,44 +199,6 @@ def delete_alert(alert_id: str):
         raise HTTPException(status_code=404, detail="Alert not found")
     return alert
 
-# Resources endpoints
-@app.get("/resources")
-async def get_resources(use_agent: bool = Query(False, description="Enable AI-driven insights via AWS Strands Agent")):
-    print("Fetching all resources...")
-    resources_data = await resources.get_all_resources()
-    
-    if use_agent and agent_client.is_configured():
-        # Process through agent
-        prompt = agent_logic.format_resources_prompt(resources_data)
-        agent_response = agent_client.invoke_agent(prompt)
-        processed_response = agent_logic.process_agent_response(agent_response, "resources")
-        
-        return {
-            "resources": resources_data,
-            "agent_insights": processed_response
-        }
-    
-    return resources_data
-
-@app.get("/resources/{resource_id}")
-def get_resource(resource_id: str):
-    resource = resources.get_resource_by_id(resource_id)
-    if not resource:
-        raise HTTPException(status_code=404, detail="Resource not found")
-    return resource
-
-@app.put("/resources/{resource_id}/optimize")
-def optimize_resource(resource_id: str):
-    resource = resources.get_resource_by_id(resource_id)
-    if not resource:
-        raise HTTPException(status_code=404, detail="Resource not found")
-    
-    # Apply optimization - reduce cost by 30%
-    updated_resource = resources.update_resource(resource_id, {
-        "status": "Optimized",
-        "monthly_cost": round(resource["monthly_cost"] * 0.7, 2)
-    })
-    return updated_resource
 
 # Security endpoints
 @app.get("/security")

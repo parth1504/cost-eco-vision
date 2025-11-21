@@ -1,6 +1,6 @@
 # agent/recommendation_agent.py
 from typing import Dict
-from dynamo import save_recommendation, get_recommendation, is_in_cooldown
+from dynamo import save_resource_in_db, get_resource_from_db, is_in_cooldown
 from bedrock_client import call_bedrock_json  # your thin wrapper returning dict
 
 SYSTEM = (
@@ -23,9 +23,9 @@ async def generate_recommendation(instance: Dict) -> Dict:
 
 def upsert_recommendation(instance: Dict) -> Dict:
     rid = instance["id"]; rtype = instance.get("type","EC2")
-    existing = get_recommendation(rid, rtype)
+    existing = get_resource_from_db(rid, rtype)
     if is_in_cooldown(existing):
         return existing
     reco = generate_recommendation(instance)
-    save_recommendation(rid, rtype, reco, instance)
+    save_resource_in_db(rid, rtype, reco, instance)
     return reco

@@ -2,7 +2,8 @@ import os
 import boto3
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
-from recommendations import generate_recommendation
+from recommendations import get_resource_from_db
+from recommendations import save_resource_in_db
 
 # Load credentials from .env
 load_dotenv()
@@ -20,46 +21,55 @@ session = boto3.Session(
 
 # ---------- EC2 ----------
 async def list_ec2_instances():
-    """Fetch all EC2 instances and enrich with recommendations."""
+    """Fetch all EC2 instances and enrich with DynamoDB-backed state."""
     try:
         ec2 = session.client("ec2")
         response = ec2.describe_instances()
         instances = []
-        recommendations=["Right-size to t3.small", "Enable detailed monitoring"]
+        default_recommendations = ["Right-size to t3.small", "Enable detailed monitoring"]
 
         for reservation in response.get("Reservations", []):
             for instance in reservation.get("Instances", []):
+
                 instance_id = instance.get("InstanceId")
                 state = instance.get("State", {}).get("Name", "unknown")
                 instance_type = instance.get("InstanceType", "unknown")
                 region = ec2.meta.region_name
                 launch_time = instance.get("LaunchTime")
-                
+
                 name_tag = next(
                     (tag["Value"] for tag in instance.get("Tags", []) if tag["Key"] == "Name"),
                     "Unnamed-Instance"
                 )
 
-                utilization = get_instance_utilization(instance_id, region,launch_time)
-                cost = cost = get_resource_cost("InstanceId", instance_id)
+                utilization = get_instance_utilization(instance_id, region, launch_time)
+                cost = get_resource_cost("InstanceId", instance_id)
 
-                # --- Pass only relevant data to recommendation agent ---
+                # Base object
                 instance_data = {
                     "id": instance_id,
                     "name": name_tag,
                     "type": "EC2",
-                    "status": state.capitalize(),
+                    "status": state.lower(),
                     "utilization": utilization,
                     "monthly_cost": cost,
                     "region": region,
                     "last_activity": launch_time.isoformat() if launch_time else None,
-                    "creation_date": launch_time.isoformat() if launch_time else None
+                    "creation_date": launch_time.isoformat() if launch_time else None,
+                    "recommendations": default_recommendations
                 }
-                ##Uncomment below to enable dynamic recommendation generation
-                # print("Generating recommendations for instance:", instance_id)
-                # recommendations = await generate_recommendation(instance_data)
-                # print("Recommendations for", instance_id, ":", recommendations)
-                instance_data["recommendations"] = recommendations
+
+                # --- CHECK DYNAMODB ---
+                db_item = get_resource_from_db(instance_id, "EC2")
+
+                if db_item:
+                    # Load stored fields (important for state persistence)
+                    instance_data["is_optimized"] = db_item.get("is_optimized", False)
+                    instance_data["recommendations"] = db_item.get("recommendations", default_recommendations)
+                else:
+                    # Save new record
+                    saved = save_resource_in_db(instance_id, "EC2", instance_data)
+                    instance_data["is_optimized"] = False
 
                 instances.append(instance_data)
 
@@ -69,47 +79,50 @@ async def list_ec2_instances():
         print(f"Error in list_ec2_instances: {e}")
         return []
 
+
 # ---------- S3 ----------
 async def list_s3_buckets():
-    """Fetch all S3 buckets and enrich with recommendations."""
+    """Fetch all S3 buckets and enrich with DynamoDB-backed state."""
     try:
         s3 = session.client("s3")
         response = s3.list_buckets()
         buckets = []
-        recommendations=["Archive old data to Glacier"]
+        default_recommendations = ["Archive old data to Glacier"]
+
         for bucket in response.get("Buckets", []):
             name = bucket.get("Name")
             creation_date = bucket.get("CreationDate")
 
-            # Attempt to fetch bucket region (may return None for us-east-1)
             try:
                 loc = s3.get_bucket_location(Bucket=name).get("LocationConstraint")
                 region = loc if loc else aws_region
             except Exception:
                 region = aws_region
 
-            utilization =get_bucket_storage_utilization(name,region)
+            utilization = get_bucket_storage_utilization(name, region)
             cost = get_resource_cost("BucketName", name)
 
             bucket_data = {
                 "id": name,
                 "name": name,
                 "type": "S3",
-                "status": "Available",
+                "status": "available",
                 "utilization": utilization,
                 "monthly_cost": cost,
                 "region": region,
                 "last_activity": creation_date.isoformat() if creation_date else None,
+                "recommendations": default_recommendations
             }
 
-            # print("Generating recommendations for S3 bucket:", name)
-            # try:
-            #     recommendations = await generate_recommendation(bucket_data)
-            # except Exception as e:
-            #     print(f"Recommendation generation failed for bucket {name}: {e}")
-            #     recommendations = []
+            db_item = get_resource_from_db(name, "S3")
 
-            bucket_data["recommendations"] = recommendations
+            if db_item:
+                bucket_data["is_optimized"] = db_item.get("is_optimized", False)
+                bucket_data["recommendations"] = db_item.get("recommendations", default_recommendations)
+            else:
+                save_resource_in_db(name, "S3", bucket_data)
+                bucket_data["is_optimized"] = False
+
             buckets.append(bucket_data)
 
         return buckets
@@ -120,17 +133,17 @@ async def list_s3_buckets():
 
 # ---------- DynamoDB ----------
 async def list_dynamodb_tables():
-    """Fetch all DynamoDB tables and enrich with recommendations."""
+    """Fetch all DynamoDB tables and enrich with DynamoDB-backed state."""
     try:
-        dynamodb = session.client("dynamodb")
-        response = dynamodb.list_tables()
+        dynamodb_client = session.client("dynamodb")
+        response = dynamodb_client.list_tables()
         table_names = response.get("TableNames", [])
         tables = []
-        recommendations=["Remove public access", "Enable encryption"]
+        default_recommendations = ["Remove public access", "Enable encryption"]
 
         for name in table_names:
             try:
-                desc = dynamodb.describe_table(TableName=name).get("Table", {})
+                desc = dynamodb_client.describe_table(TableName=name).get("Table", {})
             except Exception as e:
                 print(f"Failed to describe DynamoDB table {name}: {e}")
                 desc = {}
@@ -139,33 +152,35 @@ async def list_dynamodb_tables():
             size_bytes = desc.get("TableSizeBytes")
             status = desc.get("TableStatus", "UNKNOWN")
             creation = desc.get("CreationDateTime")
-            region = dynamodb.meta.region_name
+            region = dynamodb_client.meta.region_name
 
-            utilization  = get_consumed_read_write_capacity(name, region)
+            utilization = get_consumed_read_write_capacity(name, region)
             cost = get_resource_cost("TableName", name)
- 
 
             table_data = {
                 "id": name,
                 "name": name,
                 "type": "DynamoDB",
-                "status": status,
+                "status": status.lower(),
                 "utilization": utilization,
                 "monthly_cost": cost,
                 "region": region,
                 "item_count": item_count,
                 "table_size_bytes": size_bytes,
                 "last_activity": creation.isoformat() if creation else None,
+                "recommendations": default_recommendations
             }
 
-            # print("Generating recommendations for DynamoDB table:", name)
-            # try:
-            #     recommendations = await generate_recommendation(table_data)
-            # except Exception as e:
-            #     print(f"Recommendation generation failed for table {name}: {e}")
-            #     recommendations = []
+            db_item = get_resource_from_db(name, "DynamoDB")
 
-            table_data["recommendations"] = recommendations
+            if db_item:
+                table_data["is_optimized"] = db_item.get("is_optimized", False)
+                table_data["recommendations"] = db_item.get("recommendations", default_recommendations)
+            else:
+                table_data["is_optimized"] = False
+
+                save_resource_in_db(name, "DynamoDB", table_data)
+
             tables.append(table_data)
 
         return tables
@@ -173,7 +188,6 @@ async def list_dynamodb_tables():
     except Exception as e:
         print(f"Error in list_dynamodb_tables: {e}")
         return []
-
 
 import boto3
 from datetime import datetime, timedelta

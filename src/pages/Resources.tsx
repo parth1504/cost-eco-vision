@@ -150,20 +150,25 @@ export function Resources() {
       const savings = resource ? Math.round((resource.monthly_cost * 0.3)) : 0;
 
       const response = await fetch(`http://localhost:8000/resources/${resourceId}/optimize`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        action,
+        resource_type: resource?.type,   // <-- IMPORTANT
+      }),
+    });
       
       if (!response.ok) throw new Error('Failed to optimize resource');
       
       const data = await response.json();
 
       // Update local state with optimized resource
-      setResources(prev => prev.map(r => 
-        r.id === resourceId ? data : r
-      ));
+      setResources(prev => prev.map(r =>
+      r.id === resourceId ? { ...r, ...data } : r
+    ));
+
       
       toast({
         title: "Optimization Applied",
@@ -182,9 +187,10 @@ export function Resources() {
   };
 
   const totalMonthlyCost = resources.reduce((sum, r) => sum + r.monthly_cost, 0);
-  const runningResources = resources.filter(r => r.status === 'Running').length;
-  const idleResources = resources.filter(r => r.status === 'Idle').length;
-  const optimizedResources = resources.filter(r => r.status === 'Optimized').length;
+  const runningResources = resources.filter(r => r.status === 'running' || r.status==='active' || r.status==='available').length;
+  const idleResources = resources.length-runningResources;
+  const optimizedResources = resources.filter(r => r.is_optimized).length;
+  // const optimizedResources = resources.filter(r => r.status === 'Optimized').length;
 
   if (loading) {
     return (
@@ -337,16 +343,19 @@ export function Resources() {
                     )}
 
                     {/* Action Button */}
-                    <Button 
-                      className="w-full mt-4"
-                      variant={resource.status === 'Optimized' ? 'outline' : 'default'}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSelectedResource(resource);
-                      }}
-                    >
-                      {resource.status === 'Optimized' ? 'View Details' : 'Optimize'}
-                    </Button>
+                    <Button
+                    className="w-full mt-4"
+                    variant={resource.is_optimized ? "outline" : "default"}
+                    disabled={false} // keep clickable so user can still view details
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedResource(resource);
+                    }}
+                  >
+                  
+                    {resource.is_optimized ? "View Details" : "Optimize"}
+                  </Button>
+
                   </CardContent>
                 </Card>
               </motion.div>
