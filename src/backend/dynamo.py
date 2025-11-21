@@ -35,6 +35,7 @@ def save_resource_in_db(resource_id, resource_type, resource_data):
         "status": resource_data.get("status"),
         "monthly_cost": resource_data.get("monthly_cost"),
         "utilization": resource_data.get("utilization"),
+        "provider": resource_data.get("provider"),
         "region": resource_data.get("region"),
         "recommendations": resource_data.get("recommendations"),
         "last_checked_time": datetime.utcnow().isoformat(),

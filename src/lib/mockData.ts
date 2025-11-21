@@ -11,6 +11,7 @@ export interface Alert {
   resourceId: string;
   timestamp: string;
   status: "Active" | "Resolved" | "In Progress";
+  provider?: "AWS" | "GCP" | "Azure";
 }
 
 export interface Resource {
@@ -23,6 +24,12 @@ export interface Resource {
   region: string;
   recommendations: string[];
   lastActivity: string;
+  provider?: "AWS" | "GCP" | "Azure";
+  commands?: Array<{
+    step: number;
+    title: string;
+    command: string;
+  }>;
 }
 
 export interface Recommendation {

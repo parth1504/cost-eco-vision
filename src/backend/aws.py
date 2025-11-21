@@ -27,6 +27,7 @@ async def list_ec2_instances():
         response = ec2.describe_instances()
         instances = []
         default_recommendations = ["Right-size to t3.small", "Enable detailed monitoring"]
+        
 
         for reservation in response.get("Reservations", []):
             for instance in reservation.get("Instances", []):
@@ -54,6 +55,7 @@ async def list_ec2_instances():
                     "utilization": utilization,
                     "monthly_cost": cost,
                     "region": region,
+                    "provider": "AWS",
                     "last_activity": launch_time.isoformat() if launch_time else None,
                     "creation_date": launch_time.isoformat() if launch_time else None,
                     "recommendations": default_recommendations
@@ -110,6 +112,7 @@ async def list_s3_buckets():
                 "utilization": utilization,
                 "monthly_cost": cost,
                 "region": region,
+                "provider": "AWS",
                 "last_activity": creation_date.isoformat() if creation_date else None,
                 "recommendations": default_recommendations
             }
@@ -165,6 +168,7 @@ async def list_dynamodb_tables():
                 "utilization": utilization,
                 "monthly_cost": cost,
                 "region": region,
+                "provider": "AWS",
                 "item_count": item_count,
                 "table_size_bytes": size_bytes,
                 "last_activity": creation.isoformat() if creation else None,
