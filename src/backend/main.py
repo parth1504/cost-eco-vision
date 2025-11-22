@@ -46,6 +46,7 @@ def root():
 
 
 # Resources endpoints
+
 @app.get("/resources")
 async def get_resources(use_agent: bool = Query(False, description="Enable AI-driven insights via AWS Strands Agent")):
     print("Fetching all resources...")
@@ -104,6 +105,42 @@ def optimize_resource_api(resource_id: str, data: dict = Body(...)):
 
     return cleaned_resource
 
+
+# Alerts endpoints
+@app.get("/alerts")
+async def get_alerts():
+    print("Fetching all alerts...")
+    alerts_data = await alerts.get_all_alerts()
+
+    return alerts_data
+
+@app.get("/alerts/{alert_id}")
+async def get_alert(alert_id: str):
+    alert = await alerts.get_alert_by_id(alert_id)
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    return alert
+
+@app.put("/alerts/{alert_id}")
+async def update_alert(alert_id: str, payload: dict = Body(...)):
+    status = payload.get("status")
+    if not status:
+        raise HTTPException(status_code=422, detail="Missing 'status' in request body")
+
+    alert = await alerts.update_alert(alert_id, status)
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    return alert
+
+@app.delete("/alerts/{alert_id}")
+def delete_alert(alert_id: str):
+    alert = alerts.delete_alert(alert_id)
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    return alert
+
+
+
 @app.get("/health")
 def health_check():
     return {
@@ -160,45 +197,6 @@ def get_overview(use_agent: bool = Query(False, description="Enable AI-driven in
         }
     
     return {"data": overview_data}
-
-# Alerts endpoints
-@app.get("/alerts")
-def get_alerts(use_agent: bool = Query(False, description="Enable AI-driven insights via AWS Strands Agent")):
-    alerts_data = alerts.get_all_alerts()
-    
-    if use_agent and agent_client.is_configured():
-        # Process through agent
-        prompt = agent_logic.format_alerts_prompt(alerts_data)
-        agent_response = agent_client.invoke_agent(prompt)
-        processed_response = agent_logic.process_agent_response(agent_response, "alerts")
-        
-        return {
-            "alerts": alerts_data,
-            "agent_insights": processed_response
-        }
-    
-    return alerts_data
-
-@app.get("/alerts/{alert_id}")
-def get_alert(alert_id: str):
-    alert = alerts.get_alert_by_id(alert_id)
-    if not alert:
-        raise HTTPException(status_code=404, detail="Alert not found")
-    return alert
-
-@app.put("/alerts/{alert_id}")
-def update_alert(alert_id: str, updates: Dict[str, Any]):
-    alert = alerts.update_alert(alert_id, updates)
-    if not alert:
-        raise HTTPException(status_code=404, detail="Alert not found")
-    return alert
-
-@app.delete("/alerts/{alert_id}")
-def delete_alert(alert_id: str):
-    alert = alerts.delete_alert(alert_id)
-    if not alert:
-        raise HTTPException(status_code=404, detail="Alert not found")
-    return alert
 
 
 # Security endpoints

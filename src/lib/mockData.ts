@@ -22,15 +22,33 @@ export interface Resource {
   utilization: number;
   monthly_cost: number;
   region: string;
-  recommendations: string[];
-  lastActivity: string;
   provider?: "AWS" | "GCP" | "Azure";
+  lastActivity: string;
+
+  // NEW: Rich Recommendation Object
+  recommendations: Array<{
+    title: string;
+    description: string;
+    type: "cost" | "security" | "performance" | "compliance";
+    severity: "critical" | "warning" | "info" | "resolved" | "in-progress";
+    saving: number | "N/A";
+    issue: string;
+    impact: "high" | "medium" | "low";
+    solution_steps: Array<{
+      step: number;
+      description: string;
+      command: string;
+    }>;
+  }>;
+
+  // NEW: Commands the agent will run (flattened list)
   commands?: Array<{
     step: number;
     title: string;
     command: string;
   }>;
 }
+
 
 export interface Recommendation {
   id: string;
@@ -114,78 +132,8 @@ export interface SecurityKey {
 }
 
 // Mock data
-export const mockAlerts: Alert[] = [
-  {
-    id: "alert-1",
-    type: "Cost",
-    severity: "Critical",
-    title: "Idle EC2 Instance Running",
-    description: "EC2 instance i-0123456789 has been idle for 7 days",
-    suggestedAction: "Stop instance or resize to smaller type",
-    estimatedSavings: 245,
-    resourceId: "i-0123456789",
-    timestamp: "2024-01-15T10:30:00Z",
-    status: "Active"
-  },
-  {
-    id: "alert-2",
-    type: "Security",
-    severity: "Critical",
-    title: "RDS Instance Publicly Accessible",
-    description: "RDS instance prod-db is accessible from the internet",
-    suggestedAction: "Remove public access and configure VPC security groups",
-    resourceId: "prod-db",
-    timestamp: "2024-01-15T09:15:00Z",
-    status: "Active"
-  },
-  {
-    id: "alert-3",
-    type: "Performance",
-    severity: "Warning",
-    title: "High Memory Utilization",
-    description: "EC2 instance web-server-1 showing 85% memory usage",
-    suggestedAction: "Scale up instance or optimize application",
-    resourceId: "web-server-1",
-    timestamp: "2024-01-15T08:45:00Z",
-    status: "In Progress"
-  }
-];
 
-export const mockResources: Resource[] = [
-  {
-    id: "i-0123456789",
-    name: "web-server-1",
-    type: "EC2",
-    status: "Running",
-    utilization: 15,
-    monthly_cost: 89.50,
-    region: "us-east-1",
-    recommendations: ["Right-size to t3.small", "Enable detailed monitoring"],
-    lastActivity: "2024-01-15T12:00:00Z"
-  },
-  {
-    id: "prod-db",
-    name: "Production Database",
-    type: "RDS",
-    status: "Running",
-    utilization: 67,
-    monthly_cost: 234.00,
-    region: "us-east-1",
-    recommendations: ["Remove public access", "Enable encryption"],
-    lastActivity: "2024-01-15T11:30:00Z"
-  },
-  {
-    id: "backup-bucket",
-    name: "Backup Storage",
-    type: "S3",
-    status: "Optimized",
-    utilization: 0,
-    monthly_cost: 45.20,
-    region: "us-east-1",
-    recommendations: ["Archive old data to Glacier"],
-    lastActivity: "2024-01-14T20:15:00Z"
-  }
-];
+
 
 export const mockRecommendations: Recommendation[] = [
   {

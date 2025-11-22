@@ -51,7 +51,10 @@ const getStatusColor = (status: Resource['status']) => {
     default: return 'bg-muted text-muted-foreground';
   }
 };
-
+const formatCommand = (cmd: string) => {
+  // small normalization (optional)
+  return cmd.trim();
+};
 export function Resources() {
   const [resources, setResources] = useState([]);
   // const [resources, setResources] = useState<Resource[]>([]);
@@ -84,10 +87,11 @@ export function Resources() {
         
         const data = await response.json();
         console.log("✅ Successfully fetched resources from backend:", data.length, "resources");
+        console.log(data);
         
         // Transform backend data to match frontend Resource interface
         const transformedResources: Resource[] = data.map((resource: any) => ({
-          id: resource.id,
+          id: resource.resource_id,
           name: resource.name,
           type: resource.type as Resource['type'],
           status: resource.status as Resource['status'],
@@ -104,44 +108,7 @@ export function Resources() {
       } catch (error) {
         console.error('❌ Failed to fetch from backend:', error);
         console.log('📦 Using mock data as fallback');
-        
-        // Fallback to mock data when backend is unavailable
-        // const mockResources: Resource[] = [
-        //   {
-        //     id: "i-0123456789",
-        //     name: "web-server-1",
-        //     type: "EC2",
-        //     status: "Running",
-        //     utilization: 15,
-        //     monthly_cost: 89.50,
-        //     region: "us-east-1",
-        //     recommendations: ["Right-size to t3.small", "Enable detailed monitoring"],
-        //     lastActivity: "2024-01-15T12:00:00Z"
-        //   },
-        //   {
-        //     id: "prod-db",
-        //     name: "Production Database",
-        //     type: "RDS",
-        //     status: "Running",
-        //     utilization: 67,
-        //     monthly_cost: 234.00,
-        //     region: "us-east-1",
-        //     recommendations: ["Remove public access", "Enable encryption"],
-        //     lastActivity: "2024-01-15T11:30:00Z"
-        //   },
-        //   {
-        //     id: "backup-bucket",
-        //     name: "Backup Storage",
-        //     type: "S3",
-        //     status: "Optimized",
-        //     utilization: 0,
-        //     monthly_cost: 45.20,
-        //     region: "us-east-1",
-        //     recommendations: ["Archive old data to Glacier"],
-        //     lastActivity: "2024-01-14T20:15:00Z"
-        //   }
-        // ];
-        // setResources(mockResources);
+      
         
         toast({
           title: "Backend Unavailable",
@@ -326,7 +293,7 @@ export function Resources() {
                         </div>
                         <div>
                           <div className="flex items-center space-x-2">
-                            <CardTitle className="text-base">{resource.name}</CardTitle>
+                            <CardTitle className="text-base">{resource.id}</CardTitle>
                             {resource.provider && (
                               <Badge 
                                 className={`text-xs ${
@@ -375,16 +342,20 @@ export function Resources() {
                     </div>
 
                     {/* Recommendations */}
-                    {resource.recommendations.length > 0 && (
-                      <div>
-                        <p className="text-sm font-medium text-foreground mb-2">
-                          {resource.recommendations.length} Recommendation{resource.recommendations.length !== 1 ? 's' : ''}
-                        </p>
-                        <p className="text-xs text-muted-foreground line-clamp-2">
-                          {resource.recommendations[0]}
-                        </p>
-                      </div>
-                    )}
+                    {resource.recommendations && resource.recommendations.length > 0 && (
+                    <div>
+                      <p className="text-sm font-medium text-foreground mb-2">
+                        {resource.recommendations.length} Recommendation
+                        {resource.recommendations.length !== 1 ? "s" : ""}
+                      </p>
+
+                      {/* Show the first recommendation title */}
+                      <p className="text-xs text-muted-foreground line-clamp-2">
+                        {resource.recommendations[0].title}
+                      </p>
+                    </div>
+                  )}
+
 
                     {/* Action Button */}
                     <Button
@@ -507,54 +478,116 @@ export function Resources() {
 
                   {/* AI Recommendations */}
                   <Card>
-                    <CardHeader>
-                      <CardTitle className="text-base flex items-center space-x-2">
-                        <Settings2 className="h-4 w-4" />
-                        <span>AI Recommendations</span>
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-3">
-                        {selectedResource.recommendations.map((rec, index) => (
-                          <div key={index} className="flex items-start space-x-3 p-3 bg-muted/30 rounded-lg">
-                            <div className="h-2 w-2 bg-primary rounded-full mt-2 flex-shrink-0" />
-                            <div className="flex-1">
-                              <p className="text-sm font-medium text-foreground">{rec}</p>
-                              <p className="text-xs text-muted-foreground mt-1">
-                                Estimated savings: ${Math.round(selectedResource.monthly_cost * 0.3)}/month
-                              </p>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </CardContent>
-                  </Card>
+  <CardHeader>
+    <CardTitle className="text-base flex items-center space-x-2">
+      <Settings2 className="h-4 w-4" />
+      <span>AI Recommendations</span>
+    </CardTitle>
+  </CardHeader>
 
-                  {/* Steps the agent will run */}
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="text-base">Steps the agent will run</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      {selectedResource.commands && selectedResource.commands.length > 0 ? (
-                        <div className="space-y-3">
-                          {selectedResource.commands.map((cmd, index) => (
-                            <div key={index} className="p-3 bg-muted/30 rounded-lg space-y-2">
-                              <div className="flex items-center space-x-2">
-                                <span className="text-xs font-semibold text-primary">Step {cmd.step}</span>
-                                <span className="text-sm font-medium text-foreground">{cmd.title}</span>
-                              </div>
-                              <code className="block text-xs bg-muted px-3 py-2 rounded font-mono text-muted-foreground">
-                                {cmd.command}
-                              </code>
-                            </div>
-                          ))}
+  <CardContent className="max-w-[600px] overflow-x-auto pr-2">
+    <div className="space-y-4">
+      {selectedResource.recommendations.map((rec, idx) => (
+        <div key={idx} className="p-3 bg-muted/30 rounded-lg border border-border/40">
+          {/* Header row: title + savings */}
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-semibold text-foreground">{rec.title}</p>
+
+              {/* Badges */}
+              <div className="flex items-center gap-2 mt-2">
+                <span
+                  className={`px-2 py-0.5 rounded text-[10px] font-medium uppercase ${
+                    rec.severity === "critical"
+                      ? "bg-red-600/20 text-red-600"
+                      : rec.severity === "warning"
+                      ? "bg-yellow-500/20 text-yellow-700"
+                      : rec.severity === "resolved"
+                      ? "bg-green-500/20 text-green-700"
+                      : "bg-blue-500/20 text-blue-600"
+                  }`}
+                >
+                  {rec.severity}
+                </span>
+
+                <span
+                  className={`px-2 py-0.5 rounded text-[10px] font-medium camelcase ${
+                    rec.impact === "high"
+                      ? "bg-red-500/15 text-red-500"
+                      : rec.impact === "medium"
+                      ? "bg-yellow-500/15 text-yellow-600"
+                      : "bg-green-500/15 text-green-600"
+                  }`}
+                >
+                  Impact: {rec.impact}
+                </span>
+
+                {/* estimated savings */}
+                <span className="ml-2 text-xs text-primary font-medium">
+                  {rec.saving !== "N/A" ? `$${rec.saving}/mo` : "Savings: N/A"}
+                </span>
+              </div>
+            </div>
+
+            {/* optional: severity icon / small metadata */}
+            <div className="text-right text-xs text-muted-foreground">
+              <div>Type: {rec.type}</div>
+            </div>
+          </div>
+
+          {/* Description */}
+          {rec.description && (
+            <p className="mt-3 text-xs text-muted-foreground">{rec.description}</p>
+          )}
+
+          {/* Solution Steps */}
+          <div className="mt-3">
+            <p className="text-xs font-medium text-foreground mb-2">Solution Steps</p>
+
+            {rec.solution_steps && rec.solution_steps.length > 0 ? (
+              <div className="space-y-2">
+                {rec.solution_steps.map((step) => (
+                  <div
+                    key={step.step}
+                    className="p-3 bg-surface rounded-md border border-border/30"
+                    role="region"
+                    aria-label={`Step ${step.step} - ${step.description}`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px] font-semibold text-primary">
+                            Step {step.step}
+                          </span>
+                          <span className="text-sm font-medium text-foreground">{step.description}</span>
                         </div>
-                      ) : (
-                        <p className="text-sm text-muted-foreground">No automated steps available.</p>
-                      )}
-                    </CardContent>
-                  </Card>
+
+                       
+                      </div>
+
+                     
+                    </div>
+
+                    {/* command block */}
+                    <code
+                      className="block text-xs bg-muted px-3 py-2 rounded mt-2 font-mono text-muted-foreground overflow-auto"
+                      style={{ whiteSpace: "pre-wrap" }}
+                    >
+                      {formatCommand(step.command)}
+                    </code>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">No automated steps available.</p>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  </CardContent>
+</Card>
+
 
                   {/* Actions */}
                   <div className="flex space-x-3">
