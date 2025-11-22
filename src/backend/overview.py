@@ -1,7 +1,9 @@
 """
 Overview data for the ITOps dashboard
 """
-
+from typing import List, Dict, Any
+import random
+from alerts import get_all_alerts
 # Mock overview data structure
 mock_savings_data = {
     "monthly": 1234,
@@ -81,19 +83,73 @@ mock_recommendations = [
     }
 ]
 
-def get_all_overview_data():
-    """
-    Get all overview data
-    """
-    return {
-        "savingsData": generate_savings_mock(1234),
-        "activities": mock_activities,
-        "recommendations": mock_recommendations
-    }
 
-import random
+async def get_overview_recommendations():
+    """
+    Return high-impact, non-resolved recommendations for the Overview page.
+    Format matches the overview card structure.
+    """
 
-def generate_savings_mock(current_month_value=1234):
+    alerts = await get_all_alerts()   # EC2 + S3 + DynamoDB
+    overview_items = []
+
+    for alert in alerts:
+        # Skip resolved recommendations
+        if alert.get("status", "").lower() == "resolved":
+            continue
+
+        # Only high-impact recommendations
+        if alert.get("impact", "").lower() != "high":
+            continue
+
+        # Build label like "web-server-1 (i-01234)"
+
+        overview_items.append({
+            "id": alert.get('id', ''),
+            "resource": alert.get("id", "Unknown").split(":")[0],
+            "resourceType": alert.get("resource_type"),
+            "issue": alert.get("message", "Issue not specified"),
+            "recommendation": alert.get("title", ""),
+            "estimatedSavings": alert.get("saving", "N/A"),
+            "impact": alert.get("impact", ""),
+            "category": alert.get("source", ""),
+            "status": "Pending"
+        })
+
+ 
+    return overview_items
+
+async def get_past_resolved_recommendations():
+    """
+    Transform resolved alerts into activity-style objects.
+    """
+    alerts = await get_all_alerts()
+
+    resolved_alerts = [
+        alert for alert in alerts
+        if alert.get("status", "").lower() == "resolved"
+    ]
+
+    activities = []
+
+    for idx, alert in enumerate(resolved_alerts, start=1):
+
+        activity = {
+            "id": alert.get('id', ''),
+            "action": f"{alert.get('title', '')} resolved",
+            "resource": alert.get("resourceId", "Unknown").split(":")[0],
+            "savings": alert.get("saving", "N/A"),
+            "timestamp": alert.get("timestamp"),
+            "type": alert.get("source", "General")
+        }
+
+        activities.append(activity)
+
+    return activities
+  
+
+async def generate_savings_mock(current_month_value=1234):
+
     # realistic downward/upward drift factors for past 5 months
     multipliers = [0.65, 0.72, 0.85, 0.92, 1.05, 1.00]  # Jul → Dec trend
     
@@ -117,4 +173,14 @@ def generate_savings_mock(current_month_value=1234):
         "co2Reduced": co2,
         "totalOptimizations": optimizations,
         "chartData": chartData
+    }
+
+async def get_all_overview_data():
+    """
+    Get all overview data
+    """
+    return {
+        "savingsData": await generate_savings_mock(1234),
+        "activities": await get_past_resolved_recommendations(),
+        "recommendations": await get_overview_recommendations()
     }

@@ -53,6 +53,7 @@ export function Alerts() {
         
         const data = await response.json();
         console.log("✅ Successfully fetched alerts from backend:", data.length, "alerts");
+        console.log(data);
         
         // Transform backend data to match frontend Alert interface
         const transformedAlerts: Alert[] = data.map((alert: any) => ({
@@ -364,15 +365,18 @@ const handleApplyFix = async (alertId: string) => {
                           <span className="text-sm">{alert.status}</span>
                         </div>
                       </td>
-                      <td>
-                        {alert.estimatedSavings ? (
+                     <td>
+                        {alert.estimatedSavings && alert.estimatedSavings !== "N/A" ? (
                           <span className="font-medium text-success">
                             ${alert.estimatedSavings}/mo
                           </span>
                         ) : (
-                          <span className="text-muted-foreground">Security Fix</span>
+                          <span className="text-muted-foreground">
+                            {alert.estimatedSavings === "N/A" ? "N/A" : "Security Fix"}
+                          </span>
                         )}
                       </td>
+
                       <td>
                         <Button
                           size="sm"

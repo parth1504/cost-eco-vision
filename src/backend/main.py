@@ -123,6 +123,7 @@ async def get_alert(alert_id: str):
 
 @app.put("/alerts/{alert_id}")
 async def update_alert(alert_id: str, payload: dict = Body(...)):
+    print("Updating alert:", alert_id)
     status = payload.get("status")
     if not status:
         raise HTTPException(status_code=422, detail="Missing 'status' in request body")
@@ -139,6 +140,41 @@ def delete_alert(alert_id: str):
         raise HTTPException(status_code=404, detail="Alert not found")
     return alert
 
+# Overview endpoint
+@app.get("/overview")
+async def get_overview():
+    overview_data = await overview.get_all_overview_data() 
+    return {"data": overview_data}
+
+# ============= Security Data Endpoints =============
+
+@app.get("/security/data")
+def get_security_comprehensive():
+    """Get comprehensive security data (keys, scores, compliance, recommendations)"""
+    return get_security_data()
+
+@app.get("/security")
+async def get_security():
+    # security_data = await security.get_all_findings()
+    security_data = await security.get_securiity_findings()
+    findings = security_data.get("findings", [])
+    
+    return security_data
+
+@app.get("/security/{finding_id}")
+async def get_security_finding(finding_id: str):
+    finding = await security.get_finding_by_id(finding_id)
+    
+    if not finding:
+        raise HTTPException(status_code=404, detail="Security finding not found")
+    return finding
+
+@app.post("/security/update")
+async def update_security_finding(finding_id: str, updates: Dict[str, Any]):
+    finding = await security.update_finding(finding_id, updates)
+    if not finding:
+        raise HTTPException(status_code=404, detail="Security finding not found")
+    return {"success": True, "finding": finding}
 
 
 @app.get("/health")
@@ -173,64 +209,6 @@ def get_leaderboard_data():
     """Get gamified leaderboard data"""
     return get_leaderboard()
 
-# ============= Security Data Endpoints =============
-
-@app.get("/security/data")
-def get_security_comprehensive():
-    """Get comprehensive security data (keys, scores, compliance, recommendations)"""
-    return get_security_data()
-
-# Overview endpoint
-@app.get("/overview")
-def get_overview(use_agent: bool = Query(False, description="Enable AI-driven insights via AWS Strands Agent")):
-    overview_data = overview.get_all_overview_data()
-    
-    if use_agent and agent_client.is_configured():
-        # Process through agent
-        prompt = agent_logic.format_overview_prompt(overview_data)
-        agent_response = agent_client.invoke_agent(prompt)
-        processed_response = agent_logic.process_agent_response(agent_response, "overview")
-        
-        return {
-            "data": overview_data,
-            "agent_insights": processed_response
-        }
-    
-    return {"data": overview_data}
-
-
-# Security endpoints
-@app.get("/security")
-def get_security(use_agent: bool = Query(False, description="Enable AI-driven insights via AWS Strands Agent")):
-    security_data = security.get_all_findings()
-    findings = security_data.get("findings", [])
-    
-    if use_agent and agent_client.is_configured():
-        # Process through agent
-        prompt = agent_logic.format_security_prompt(findings)
-        agent_response = agent_client.invoke_agent(prompt)
-        processed_response = agent_logic.process_agent_response(agent_response, "security")
-        
-        return {
-            **security_data,
-            "agent_insights": processed_response
-        }
-    
-    return security_data
-
-@app.get("/security/{finding_id}")
-def get_security_finding(finding_id: str):
-    finding = security.get_finding_by_id(finding_id)
-    if not finding:
-        raise HTTPException(status_code=404, detail="Security finding not found")
-    return finding
-
-@app.post("/security/update")
-def update_security_finding(finding_id: str, updates: Dict[str, Any]):
-    finding = security.update_finding(finding_id, updates)
-    if not finding:
-        raise HTTPException(status_code=404, detail="Security finding not found")
-    return {"success": True, "finding": finding}
 
 # Optimization endpoints
 @app.get("/optimization")

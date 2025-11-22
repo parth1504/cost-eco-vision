@@ -7,7 +7,7 @@ export interface Alert {
   title: string;
   description: string;
   suggestedAction: string;
-  estimatedSavings?: number;
+  estimatedSavings?: number | "N/A";
   resourceId: string;
   timestamp: string;
   status: "Active" | "Resolved" | "In Progress";

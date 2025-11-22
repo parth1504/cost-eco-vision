@@ -5,6 +5,7 @@ from dynamo import save_resource_in_db, get_resource_from_db
 from decimal import Decimal
 from fastapi import HTTPException
 
+
 def decimal_to_float(obj):
     """Convert DynamoDB Decimal types → float safely."""
     if isinstance(obj, Decimal):
@@ -33,7 +34,7 @@ async def generate_alerts_from_resources() -> List[Dict[str, Any]]:
                 "severity": rec.get("severity").capitalize(),
                 "source": rec.get("type").capitalize(),    # cost / security / performance
                 "affected_resources": [resource_id],
-                "status": "active",
+                "status": rec.get("status").lower(),
                 "timestamp": datetime.utcnow().isoformat() + "Z",
                 "impact": rec.get("impact", "medium"),
                 "saving": rec.get("saving", "N/A"),
@@ -60,23 +61,19 @@ async def get_alert_by_id(alert_id: str):
 async def update_alert(alert_id: str, new_status: str):
     """
     Update alert status by mapping it to the correct resource + recommendation.
-    alert_id format: <resource_id>-<title-with-dashes>
+    alert_id format: <resource_id>-<title-with-dashes> (title may use -- for spaces)
     """
 
-    # -----------------------------
-    # 1. Parse alert_id
-    # -----------------------------
+    # 1) parse alert id
     try:
-        parts = alert_id.split(":", 1)
-        resource_id = parts[0]
-        rec_title_raw = parts[1].replace("~", " ")
+        resource_id, rec_slug = alert_id.split(":", 1)
+        # recover title: replace '--' with space, also replace other separators if needed
+        rec_title_raw = rec_slug.replace("--", " ").replace("~", " ").replace("%E2%80%94", " ").strip()
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid alert ID format")
 
-    # -----------------------------
-    # 2. Find resource (try all resource types)
-    # -----------------------------
-    resource_types = ["EC2", "S3", "DynamoDB"]
+    # 2) find resource (try resource types or a generic lookup)
+    resource_types = ["EC2", "S3", "DynamoDB", "RDS", "Lambda"]
     resource = None
     resource_type_found = None
 
@@ -89,38 +86,34 @@ async def update_alert(alert_id: str, new_status: str):
 
     if not resource:
         raise HTTPException(status_code=404, detail="Resource not found for this alert")
-
-    # -----------------------------
-    # 3. Find correct recommendation inside resource
-    # -----------------------------
+    # 3) find recommendation and index
     rec_list = resource.get("recommendations", [])
-    target_rec = None
-
-    for rec in rec_list:
-        if rec.get("title", "").lower() == rec_title_raw.lower():
-            target_rec = rec
+    target_index = None
+    for i, rec in enumerate(rec_list):
+        if rec.get("title", "").strip().lower() == rec_title_raw.strip().lower():
+            target_index = i
             break
+    if target_index is None:
+        # helpful debug message
+        raise HTTPException(status_code=404, detail=f"Recommendation titled '{rec_title_raw}' not found in resource {resource_id}")
 
-    if not target_rec:
-        raise HTTPException(status_code=404, detail="Recommendation not found in resource")
+    # 4) build updated recommendation object (preserve fields, update status + resolved_at)
+    old_rec = rec_list[target_index]
+    updated_rec = { **old_rec }  # shallow copy
+    updated_rec["status"] = new_status.lower()
 
-    # -----------------------------
-    # 4. Update recommendation status
-    # -----------------------------
-    target_rec["status"] = new_status.lower()  
+    updated_rec["last_activity"] = datetime.utcnow().isoformat() + "Z"
 
-    # -----------------------------
-    # 5. Save updated resource
-    # -----------------------------
+    # 5) replace in the recommendations array and save resource
+    resource["recommendations"][target_index] = updated_rec
+    print(f"Updated recommendation: {updated_rec}")
+    # Ensure save_resource_in_db preserves is_optimized if present (your function should already do this)
     save_resource_in_db(
         resource_id=resource_id,
         resource_type=resource_type_found,
         resource_data=resource
     )
-
-    # -----------------------------
-    # 6. Return updated resource cleaned for frontend
-    # -----------------------------
+    # 6) return cleaned resource for frontend (convert Decimal -> float if necessary)
     return decimal_to_float(resource)
 
 

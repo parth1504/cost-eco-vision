@@ -42,8 +42,8 @@ const itemVariants = {
 
 export function Overview() {
   const [savingsData, setSavingsData] = useState<SavingsData>(mockSavingsData);
-  const [recommendations, setRecommendations] = useState<Recommendation[]>(mockRecommendations);
-  const [activities, setActivities] = useState<Activity[]>(mockActivities);
+  const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
+  const [activities, setActivities] = useState<Activity[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {

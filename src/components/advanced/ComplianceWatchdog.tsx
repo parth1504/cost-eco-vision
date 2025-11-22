@@ -259,7 +259,7 @@ export function ComplianceWatchdog() {
       </motion.div>
 
       {/* Security Recommendations */}
-      <motion.div variants={itemVariants}>
+      {/* <motion.div variants={itemVariants}>
         <Card className="dashboard-card">
           <CardHeader>
             <CardTitle className="flex items-center space-x-2">
@@ -303,7 +303,7 @@ export function ComplianceWatchdog() {
             </div>
           </CardContent>
         </Card>
-      </motion.div>
+      </motion.div> */}
     </div>
   );
 }
