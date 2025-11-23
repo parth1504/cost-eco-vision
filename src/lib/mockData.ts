@@ -12,6 +12,11 @@ export interface Alert {
   timestamp: string;
   status: "Active" | "Resolved" | "In Progress";
   provider?: "AWS" | "GCP" | "Azure";
+  solution_steps?: Array<{
+    step: number;
+    description: string;
+    command: string;
+  }>;
 }
 
 export interface Resource {

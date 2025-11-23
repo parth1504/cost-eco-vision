@@ -26,6 +26,11 @@ const itemVariants = {
   visible: { opacity: 1, x: 0 }
 };
 
+const formatCommand = (cmd: string) => {
+  // small normalization (optional)
+  return cmd.trim();
+};
+
 export function Alerts() {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [selectedAlert, setSelectedAlert] = useState<Alert | null>(null);
@@ -66,7 +71,8 @@ export function Alerts() {
           estimatedSavings: alert.saving,
           resourceId: alert.affected_resources?.[0] || "",
           timestamp: alert.timestamp,
-          status: alert.status === "active" ? "Active" : alert.status === "resolved" ? "Resolved" : "In Progress"
+          status: alert.status === "active" ? "Active" : alert.status === "resolved" ? "Resolved" : "In Progress",
+          solution_steps: alert.solution_steps || []
         }));
         
         setAlerts(transformedAlerts);
@@ -402,7 +408,7 @@ const handleApplyFix = async (alertId: string) => {
 
       {/* Alert Detail Sheet */}
       <Sheet open={!!selectedAlert} onOpenChange={(open) => !open && setSelectedAlert(null)}>
-        <SheetContent className="w-[500px]">
+        <SheetContent className="w-[750px] max-w-[750px] overflow-y-auto">
           {selectedAlert && (
             <>
               <SheetHeader>
@@ -467,7 +473,48 @@ const handleApplyFix = async (alertId: string) => {
                     <CardTitle className="text-base">AI Recommendation</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <p className="text-sm text-foreground">{selectedAlert.suggestedAction}</p>
+                    {/* <p className="text-sm text-foreground">{selectedAlert.description}</p> */}
+                    <div className="mt-3">
+                    <p className="text-xs font-medium text-foreground mb-2">Solution Steps</p>
+
+                      {selectedAlert.solution_steps && selectedAlert.solution_steps.length > 0 ? (
+                        <div className="space-y-2">
+                          {selectedAlert.solution_steps.map((step) => (
+                            <div
+                              key={step.step}
+                              className="p-3 bg-surface rounded-md border border-border/30"
+                              role="region"
+                              aria-label={`Step ${step.step} - ${step.description}`}
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[11px] font-semibold text-primary">
+                                      Step {step.step}
+                                    </span>
+                                    <span className="text-sm font-medium text-foreground">{step.description}</span>
+                                  </div>
+
+                                
+                                </div>
+
+                              
+                              </div>
+
+                              {/* command block */}
+                              <code
+                                className="block text-xs bg-muted px-3 py-2 rounded mt-2 font-mono text-muted-foreground overflow-auto"
+                                style={{ whiteSpace: "pre-wrap" }}
+                              >
+                                {formatCommand(step.command)}
+                              </code>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">No automated steps available.</p>
+                      )}
+                    </div>
                   </CardContent>
                 </Card>
 
