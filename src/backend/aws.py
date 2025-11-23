@@ -48,8 +48,8 @@ ec2_recommendations = [
         ),
         "type": "cost",
         "severity": "warning",
-        "saving": 42.75,  # monthly savings estimate
-        "issue": "Low CPU utilization (<5%) detected for 7 days",
+        "saving": 4.23,  # monthly savings estimate
+        "issue": "Low CPU utilization (<20%) detected for 7 days",
         "impact": "medium",
         "status": "active",
         "solution_steps": [

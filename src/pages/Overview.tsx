@@ -14,7 +14,7 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { mockSavingsData, mockActivities, mockRecommendations, type Activity, type Recommendation } from "@/lib/mockData";
+import { mockSavingsData, type Activity, type Recommendation } from "@/lib/mockData";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 
 interface SavingsData {
@@ -115,7 +115,7 @@ export function Overview() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-success">
-              {isLoading ? "..." : formatCurrency(savingsData.monthly)}
+              {isLoading ? "..." : formatCurrency(activities.reduce((sum, activity) => sum + activity.savings, 0))}
             </div>
             <div className="flex items-center space-x-2 text-xs text-muted-foreground">
               <TrendingUp className="h-3 w-3 text-success" />
@@ -132,7 +132,7 @@ export function Overview() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-primary">
-              {isLoading ? "..." : formatCurrency(savingsData.yearly)}
+              {isLoading ? "..." : formatCurrency(activities.reduce((sum, activity) => sum + activity.savings, 0) * 12)}
             </div>
             <div className="flex items-center space-x-2 text-xs text-muted-foreground">
               <span>Projected annual savings</span>
@@ -148,7 +148,7 @@ export function Overview() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-eco">
-              {isLoading ? "..." : `${savingsData.co2Reduced} tons`}
+              {isLoading ? "..." : `${Math.round(savingsData.co2Reduced * activities.length)} tons`}
             </div>
             <div className="flex items-center space-x-2 text-xs text-muted-foreground">
               <TrendingUp className="h-3 w-3 text-eco" />
@@ -165,7 +165,7 @@ export function Overview() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-foreground">
-              {isLoading ? "..." : savingsData.totalOptimizations}
+              {isLoading ? "..." : activities.length}
             </div>
             <div className="flex items-center space-x-2 text-xs text-muted-foreground">
               <CheckCircle className="h-3 w-3 text-success" />
