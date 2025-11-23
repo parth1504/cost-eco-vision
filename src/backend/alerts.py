@@ -101,8 +101,7 @@ async def update_alert(alert_id: str, new_status: str):
     # =============================
     # 4) Execute AWS commands
     # =============================
-    solution_steps = rec.get("solution_steps", [])
-    boto3_commands = []
+    boto3_commands = rec.get("boto3_sequence", [])
 
 
     execution_results = await apply_aws_commands(boto3_commands)

@@ -6,6 +6,7 @@ aws_clients = {
     "ec2": boto3.client("ec2"),
     "iam": boto3.client("iam"),
     "acm": boto3.client("acm"),
+    "dynamodb": boto3.client("dynamodb"),
 }
 
 CLI_TO_BOTO_MAPPINGS = {
@@ -22,15 +23,10 @@ CLI_TO_BOTO_MAPPINGS = {
 
 async def apply_aws_commands(commands: list):
     """
-    commands = [
-        {
-            "service": "s3",
-            "operation": "put_bucket_encryption",
-            "params": { ... }
-        },
-        ...
-    ]
+    Executes boto3_sequence exactly as stored in DynamoDB.
+    No placeholder replacement — assumes commands are already fully resolved.
     """
+
     print(f"Applying {len(commands)} AWS commands")
     results = []
 
@@ -40,42 +36,49 @@ async def apply_aws_commands(commands: list):
         params = cmd.get("params", {})
 
         if service not in aws_clients:
-            results.append({"success": False, "error": f"Unsupported AWS service '{service}'"})
+            msg = f"Unsupported AWS service '{service}'"
+            print(msg)
+            results.append({"success": False, "error": msg})
             continue
 
         client = aws_clients[service]
 
         if not hasattr(client, operation):
-            results.append({"success": False, "error": f"Invalid AWS operation '{operation}'"})
+            msg = f"Invalid AWS operation '{operation}'"
+            print(msg)
+            results.append({"success": False, "error": msg})
             continue
 
         try:
             print(f"Running AWS: {service}.{operation}({params})")
+            
             fn = getattr(client, operation)
             response = fn(**params)
+
+            print(f"Success: {service}.{operation}")
 
             results.append({
                 "success": True,
                 "operation": f"{service}.{operation}",
                 "response": response
             })
-            print(f"Success: {service}.{operation}")
 
         except ClientError as e:
+            msg = str(e)
+            print(f"AWS ClientError: {service}.{operation} - {msg}")
             results.append({
                 "success": False,
                 "operation": f"{service}.{operation}",
-                "error": str(e)
+                "error": msg
             })
-            print(f"AWS ClientError: {service}.{operation} - {str(e)}")
 
         except Exception as e:
+            msg = str(e)
+            print(f"Error: {service}.{operation} - {msg}")
             results.append({
                 "success": False,
                 "operation": f"{service}.{operation}",
-                "error": str(e)
-
+                "error": msg
             })
-            print(f"Error: {service}.{operation} - {str(e)}")
 
     return results

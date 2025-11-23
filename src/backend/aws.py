@@ -111,78 +111,20 @@ ec2_recommendations = [
                 "command": "aws ec2 monitor-instances --instance-ids {INSTANCE_ID}",
                 "description": "Enables detailed 1-minute CloudWatch monitoring for the EC2 instance."
             }
-        ]
+        ],
+        "boto3_sequence": [
+            {
+                "service": "ec2",
+                "operation": "monitor_instances",
+                "params": {
+                "InstanceIds": ["{INSTANCE_ID}"]
+                }
+            }
+            ]
+
     },
 
-    # {
-    #     "title": "Publicly Accessible EC2 Instance",
-    #     "description": (
-    #         "The instance has a public IP and a security group rule that allows inbound access from 0.0.0.0/0. "
-    #         "This poses a major security risk and violates most compliance benchmarks (CIS, PCI, SOC2)."
-    #     ),
-    #     "type": "security",
-    #     "severity": "critical",
-    #     "saving": "N/A",
-    #     "issue": "Security group open to the world (0.0.0.0/0)",
-    #     "impact": "high",
-    #     "solution_steps": [
-    #         {
-    #             "step": 1,
-    #             "command": "aws ec2 revoke-security-group-ingress --group-id {SG_ID} --protocol tcp --port 22 --cidr 0.0.0.0/0",
-    #             "description": "Removes the insecure inbound rule from the security group."
-    #         },
-    #         {
-    #             "step": 2,
-    #             "command": "aws ec2 authorize-security-group-ingress --group-id {SG_ID} --protocol tcp --port 22 --cidr {YOUR_IP}/32",
-    #             "description": "Restricts SSH access to your IP only."
-    #         }
-    #     ]
-    # },
-
-    # {
-    #     "title": "EBS Volume Attached but Unused",
-    #     "description": (
-    #         "An EBS volume attached to this instance has had no read/write activity for more than 30 days. "
-    #         "You may be paying for unused storage."
-    #     ),
-    #     "type": "cost",
-    #     "severity": "warning",
-    #     "saving": 12.0,  # monthly volume cost
-    #     "issue": "Unused EBS volume detected",
-    #     "impact": "low",
-    #     "solution_steps": [
-    #         {
-    #             "step": 1,
-    #             "command": "aws ec2 detach-volume --volume-id {VOLUME_ID}",
-    #             "description": "Detaches the unused volume."
-    #         },
-    #         {
-    #             "step": 2,
-    #             "command": "aws ec2 delete-volume --volume-id {VOLUME_ID}",
-    #             "description": "Deletes the unused volume to eliminate cost."
-    #         }
-    #     ]
-    # },
-
-    # {
-    #     "title": "Missing IMDSv2 Protection",
-    #     "description": (
-    #         "The instance metadata service is configured for IMDSv1, which is susceptible to SSRF attacks. "
-    #         "Enforcing IMDSv2 significantly improves instance security posture."
-    #     ),
-    #     "type": "security",
-    #     "severity": "high",
-    #     "saving": "N/A",
-    #     "issue": "IMDSv1 still enabled",
-    #     "impact": "high",
-    #     "solution_steps": [
-    #         {
-    #             "step": 1,
-    #             "command": "aws ec2 modify-instance-metadata-options --instance-id {INSTANCE_ID} --http-endpoint enabled --http-tokens required",
-    #             "description": "Configures the instance to require IMDSv2."
-    #         }
-    #     ]
-    # }
+   
 ]
 # ---------- EC2 ----------
 async def list_ec2_instances():
@@ -334,7 +276,22 @@ s3_recommendations = [
                 ),
                 "description": "Blocks all forms of public access to the bucket."
             }
+        ],
+        "boto3_sequence": [{
+            "service": "s3",
+            "operation": "put_public_access_block",
+            "params": {
+                "Bucket": "{BUCKET_NAME}",
+                "PublicAccessBlockConfiguration": {
+                "BlockPublicAcls": True,
+                "IgnorePublicAcls": True,
+                "BlockPublicPolicy": True,
+                "RestrictPublicBuckets": True
+                }
+            }
+            }
         ]
+
     },
 
     # {
@@ -361,34 +318,34 @@ s3_recommendations = [
     #     ]
     # },
 
-    {
-        "title": "Delete Unused Multipart Uploads",
-        "description": (
-            "There are aborted or in-progress multipart uploads older than 7 days. "
-            "These accumulate storage and cost unnecessarily."
-        ),
-        "type": "cost",
-        "severity": "warning",
-        "saving": 5.60,    # estimated cost reclamation
-        "issue": "Orphaned multipart uploads detected",
-        "impact": "low",
-        "status": "active",
-        "solution_steps": [
-            {
-                "step": 1,
-                "command": "aws s3api list-multipart-uploads --bucket {BUCKET_NAME}",
-                "description": "Identify ongoing or abandoned multipart uploads."
-            },
-            {
-                "step": 2,
-                "command": (
-                    "aws s3api abort-multipart-upload --bucket {BUCKET_NAME} "
-                    "--key {OBJECT_KEY} --upload-id {UPLOAD_ID}"
-                ),
-                "description": "Abort unused multipart uploads to clean up wasted storage."
-            }
-        ]
-    }
+    # {
+    #     "title": "Delete Unused Multipart Uploads",
+    #     "description": (
+    #         "There are aborted or in-progress multipart uploads older than 7 days. "
+    #         "These accumulate storage and cost unnecessarily."
+    #     ),
+    #     "type": "cost",
+    #     "severity": "warning",
+    #     "saving": 5.60,    # estimated cost reclamation
+    #     "issue": "Orphaned multipart uploads detected",
+    #     "impact": "low",
+    #     "status": "active",
+    #     "solution_steps": [
+    #         {
+    #             "step": 1,
+    #             "command": "aws s3api list-multipart-uploads --bucket {BUCKET_NAME}",
+    #             "description": "Identify ongoing or abandoned multipart uploads."
+    #         },
+    #         {
+    #             "step": 2,
+    #             "command": (
+    #                 "aws s3api abort-multipart-upload --bucket {BUCKET_NAME} "
+    #                 "--key {OBJECT_KEY} --upload-id {UPLOAD_ID}"
+    #             ),
+    #             "description": "Abort unused multipart uploads to clean up wasted storage."
+    #         }
+    #     ]
+    # }
 ]
 
 async def list_s3_buckets():
@@ -505,7 +462,20 @@ dynamodb_recommendations = [
                 ),
                 "description": "Enable AWS KMS-based server-side encryption."
             }
-        ]
+        ],
+        "boto3_sequence": [
+            {
+                "service": "dynamodb",
+                "operation": "update_table",
+                "params": {
+                "TableName": "{TABLE_NAME}",
+                "SSESpecification": {
+                    "Enabled": True,
+                    "SSEType": "KMS"
+                }
+                }
+            }
+            ]
     },
 
     # {
@@ -560,6 +530,18 @@ dynamodb_recommendations = [
                 ),
                 "description": "Enable point-in-time recovery."
             }
+        ],
+        "boto3_sequence": [
+        {
+            "service": "dynamodb",
+            "operation": "update_continuous_backups",
+            "params": {
+            "TableName": "{TABLE_NAME}",
+            "PointInTimeRecoverySpecification": {
+                "PointInTimeRecoveryEnabled": True
+            }
+            }
+        }
         ]
     },
 
