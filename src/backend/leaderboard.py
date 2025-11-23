@@ -4,7 +4,7 @@ mock_leaderboard_entries = [
     {
         "id": "team-1",
         "team": "Platform Team",
-        "user": "Sarah Chen",
+        "user": "Pranali Shinde",
         "savings": 2847,
         "optimizations": 12,
         "rank": 1
@@ -12,7 +12,7 @@ mock_leaderboard_entries = [
     {
         "id": "team-2",
         "team": "Data Engineering",
-        "user": "Marcus Johnson",
+        "user": "Parth Shah",
         "savings": 2156,
         "optimizations": 8,
         "rank": 2

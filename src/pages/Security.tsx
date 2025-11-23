@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Shield, AlertTriangle, CheckCircle, Eye, Lock, FileText, DollarSign } from "lucide-react";
+import { Shield, AlertTriangle, CheckCircle, Eye, Lock, FileText, DollarSign,Key, RotateCcw, TrendingUp, } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,8 +8,8 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/
 import { Progress } from "@/components/ui/progress";
 import { SecurityFinding } from "@/lib/mockData";
 import { useToast } from "@/hooks/use-toast";
-import { ComplianceWatchdog } from "@/components/advanced/ComplianceWatchdog";
 
+import { LineChart, Line, XAxis, YAxis, ResponsiveContainer } from "recharts";
 const containerVariants = {
   hidden: { opacity: 0 },
   visible: {
@@ -49,13 +49,29 @@ const getSeverityIcon = (severity: SecurityFinding['severity']) => {
   }
 };
 
+const getKeyStatusColor = (status: string) => {
+    switch (status) {
+      case 'Expired': return 'status-critical';
+      case 'Unused': return 'status-warning';
+      default: return 'status-success';
+    }
+  };
+
 export function Security() {
+ 
+
   const [findings, setFindings] = useState<SecurityFinding[]>([]);
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();
+  const [securityScore, setSecurityScore] = useState(0);
+  const [scoreTrend, setScoreTrend] = useState<any[]>([]);
+  const [weeklyData, setWeeklyData] = useState<any[]>([]);
+  const [keys, setKeys] = useState<any[]>([]);
+
 
   useEffect(() => {
     fetchSecurityData();
+    fetchSecurityData2();
   }, []);
 
   const fetchSecurityData = async () => {
@@ -73,58 +89,47 @@ export function Security() {
       }
       
       const data = await response.json();
+      console.log("📥 Backend response received:", data);
       console.log("✅ Successfully fetched security findings from backend:", data.findings?.length, "findings");
       setFindings(data.findings);
     } catch (error) {
       console.error("❌ Failed to fetch from backend:", error);
       console.log("📦 Using mock data as fallback");
-      
-      // Fallback to mock data
-      const mockFindings: SecurityFinding[] = [
-        {
-          id: "sec-1",
-          title: "RDS Instance Publicly Accessible",
-          severity: "Critical",
-          description: "Database instance can be accessed from the internet",
-          resource: "prod-db",
-          compliance: ["SOC 2", "ISO 27001", "GDPR"],
-          remediation: "Remove public access and configure VPC security groups",
-          status: "Open"
-        },
-        {
-          id: "sec-2",
-          title: "S3 Bucket Not Encrypted",
-          severity: "High",
-          description: "Sensitive data stored without encryption at rest",
-          resource: "backup-bucket",
-          compliance: ["SOC 2", "HIPAA"],
-          remediation: "Enable AES-256 server-side encryption",
-          estimatedCost: 12,
-          status: "Open"
-        },
-        {
-          id: "sec-3",
-          title: "Overly Permissive Security Group",
-          severity: "Medium",
-          description: "Security group allows inbound traffic from 0.0.0.0/0",
-          resource: "web-sg",
-          compliance: ["CIS Benchmark"],
-          remediation: "Restrict inbound rules to specific IP ranges",
-          status: "In Progress"
-        }
-      ];
-      setFindings(mockFindings);
-      
+
       toast({
         title: "Backend Unavailable",
-        description: "Using mock data. Start FastAPI server with: cd src/backend && python main.py",
+        description: "Restart server to fetch live alerts",
         variant: "destructive"
       });
     } finally {
       setLoading(false);
     }
   };
-
+  const fetchSecurityData2 = async () => {
+    try {
+      console.log("🔄 Fetching security data from backend...");
+      const response = await fetch("http://localhost:8000/security/data");
+      
+      if (!response.ok) {
+        throw new Error(`Backend returned ${response.status}`);
+      }
+      
+      const data = await response.json();
+      console.log("✅ Successfully fetched security data:", data);
+      setSecurityScore(data.score.current);
+      setScoreTrend(data.score.trend);
+      setWeeklyData(data.score.weeklyData || []);
+      setKeys(data.keys);
+    } catch (error) {
+      console.error("❌ Failed to fetch security data:", error);
+      setSecurityScore(0);
+      setScoreTrend([]);
+      setWeeklyData([]);
+      setKeys([]);
+    } finally {
+      setLoading(false);
+    }
+  };
   const handleFixFinding = async (findingId: string) => {
     try {
       const response = await fetch("http://localhost:8000/security/update", {
@@ -159,13 +164,47 @@ export function Security() {
     }
   };
 
+  const computeComplianceCoverage = (framework: string) => {
+    const relatedFindings = findings.filter(f => f.compliance.includes(framework));
+
+    if (relatedFindings.length === 0) {
+      return 100; // No issues → fully compliant
+    }
+
+    const fixedCount = relatedFindings.filter(f => f.status === "Fixed").length;
+
+    return Math.round((fixedCount / relatedFindings.length) * 100);
+  };
+  const handleRotateKey = (keyId: string) => {
+    setKeys(prev => prev.map(key =>
+      key.id === keyId
+        ? { ...key, status: "Active" as const, lastUsed: new Date().toISOString() }
+        : key
+    ));
+
+    // Improve security score
+    const newScore = Math.min(100, securityScore + 5);
+    setSecurityScore(newScore);
+
+    toast({
+      title: "🔄 Key Rotated Successfully",
+      description: "Security key has been rotated and security score improved by +5 points.",
+    });
+  };
+
+  const unusedKeys = keys.filter(k => k.status === 'Unused').length;
+  const expiredKeys = keys.filter(k => k.status === 'Expired').length;
+
+  
+  
   const openFindings = findings.filter(f => f.status === 'Open').length;
   const fixedFindings = findings.filter(f => f.status === 'Fixed').length;
   const inProgressFindings = findings.filter(f => f.status === 'In Progress').length;
   const criticalFindings = findings.filter(f => f.severity === 'Critical' && f.status === 'Open').length;
 
-  const securityScore = Math.round(((fixedFindings) / findings.length) * 100);
-  const complianceItems = ['SOC 2', 'ISO 27001', 'GDPR', 'HIPAA', 'CIS Benchmark'];
+  const securityScore1 = Math.round(((fixedFindings) / findings.length) * 100);
+  const complianceItems = ['SOC 2', 'ISO 27001', 'CIS Benchmark'];
+  
 
   return (
     <motion.div
@@ -189,11 +228,11 @@ export function Security() {
             <div className="flex items-center justify-between">
               <div className="space-y-1">
                 <p className="text-sm text-muted-foreground">Security Score</p>
-                <p className="text-2xl font-bold text-success">{securityScore}%</p>
+                <p className="text-2xl font-bold text-success">{securityScore1}%</p>
               </div>
               <Shield className="h-8 w-8 text-success" />
             </div>
-            <Progress value={securityScore} className="mt-3 h-2" />
+            <Progress value={securityScore1} className="mt-3 h-2" />
           </CardContent>
         </Card>
 
@@ -293,23 +332,44 @@ export function Security() {
                         {/* Remediation */}
                         <div>
                           <h4 className="font-medium text-foreground mb-2">AI Remediation</h4>
-                          <div className="p-3 bg-primary/5 border border-primary/20 rounded-lg">
-                            <p className="text-sm text-foreground">{finding.remediation}</p>
+
+                          {/* Title */}
+                          <div className="p-3 bg-primary/5 border border-primary/20 rounded-lg space-y-3">
+                            <p className="text-sm font-semibold">{finding.remediation.title}</p>
+
+                            {/* Steps */}
+                            <div className="space-y-3">
+                              {finding.remediation.steps?.map((step) => (
+                                <div
+                                  key={step.step}
+                                  className="p-3 rounded-md bg-muted border border-muted-foreground/20"
+                                >
+                                  <p className="text-sm font-medium mb-1">Step {step.step}</p>
+                                  <p className="text-xs text-muted-foreground mb-2">{step.description}</p>
+
+                                  {/* Command block */}
+                                  <pre className="text-xs bg-background p-2 rounded-md border overflow-auto">
+                                    {step.command}
+                                  </pre>
+                                </div>
+                              ))}
+                            </div>
                           </div>
                         </div>
 
                         {/* Cost Impact */}
-                        {finding.estimatedCost && (
-                          <div>
-                            <h4 className="font-medium text-foreground mb-2">Cost Impact</h4>
-                            <div className="flex items-center space-x-2">
-                              <DollarSign className="h-4 w-4 text-success" />
-                              <span className="text-sm text-success font-medium">
-                                Additional ${finding.estimatedCost}/month for security controls
-                              </span>
-                            </div>
+                        {finding.estimatedCost !== undefined && finding.estimatedCost !== null && (
+                        <div>
+                          <h4 className="font-medium text-foreground mb-2">Cost Impact</h4>
+                          <div className="flex items-center space-x-2">
+                            <DollarSign className="h-4 w-4 text-success" />
+                            <span className="text-sm text-success font-medium">
+                              Additional ${finding.estimatedCost}/month for security controls
+                            </span>
                           </div>
-                        )}
+                        </div>
+                      )}
+
 
                         {/* Actions */}
                         <div className="flex space-x-3 pt-2">
@@ -322,9 +382,7 @@ export function Security() {
                               >
                                 Apply Fix
                               </Button>
-                              <Button size="sm" variant="outline">
-                                Mark In Progress
-                              </Button>
+                             
                             </>
                           ) : (
                             <div className="flex items-center space-x-2 text-success">
@@ -357,7 +415,8 @@ export function Security() {
             </CardHeader>
             <CardContent className="space-y-4">
               {complianceItems.map((item) => {
-                const coverage = Math.floor(Math.random() * 30) + 70; // Mock coverage percentage
+                const coverage = computeComplianceCoverage(item);
+
                 return (
                   <div key={item} className="space-y-2">
                     <div className="flex justify-between text-sm">
@@ -414,31 +473,183 @@ export function Security() {
             </CardContent>
           </Card>
 
-          {/* Quick Actions */}
-          <Card className="dashboard-card">
-            <CardHeader>
-              <CardTitle className="text-base">Quick Actions</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <Button className="w-full action-primary">
-                <Shield className="h-4 w-4 mr-2" />
-                Run Security Scan
-              </Button>
-              <Button variant="outline" className="w-full">
-                <FileText className="h-4 w-4 mr-2" />
-                Generate Report
-              </Button>
-              <Button variant="outline" className="w-full">
-                <Lock className="h-4 w-4 mr-2" />
-                Review Policies
-              </Button>
-            </CardContent>
-          </Card>
+         
         </motion.div>
       </div>
 
       {/* Advanced AI Features */}
-      <ComplianceWatchdog />
+      {/* <ComplianceWatchdog /> */}
+        <motion.div variants={itemVariants}>
+          <Card className="dashboard-card">
+            <CardHeader>
+              <CardTitle className="flex items-center space-x-2">
+                <Shield className="h-5 w-5 text-success" />
+                <span>Cloud Security Health Score</span>
+              </CardTitle>
+              <CardDescription>
+                Overall security posture with weekly trending
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="space-y-4">
+                  <div className="text-center">
+                    <div className="relative inline-block">
+                      <svg className="w-32 h-32 transform -rotate-90" viewBox="0 0 100 100">
+                        <circle
+                          cx="50"
+                          cy="50"
+                          r="40"
+                          stroke="hsl(var(--muted))"
+                          strokeWidth="8"
+                          fill="none"
+                        />
+                        <motion.circle
+                          cx="50"
+                          cy="50"
+                          r="40"
+                          stroke="hsl(var(--success))"
+                          strokeWidth="8"
+                          fill="none"
+                          strokeDasharray={`${2 * Math.PI * 40}`}
+                          strokeDashoffset={`${2 * Math.PI * 40 * (1 - securityScore / 100)}`}
+                          initial={{ strokeDashoffset: 2 * Math.PI * 40 }}
+                          animate={{ strokeDashoffset: 2 * Math.PI * 40 * (1 - securityScore / 100) }}
+                          transition={{ duration: 1, ease: "easeOut" }}
+                          strokeLinecap="round"
+                        />
+                      </svg>
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <div className="text-center">
+                          <div className="text-3xl font-bold text-success">{securityScore}</div>
+                          <div className="text-xs text-muted-foreground">Score</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4 text-center">
+                    <div className="p-3 bg-success/5 border border-success/20 rounded-lg">
+                      <TrendingUp className="h-5 w-5 text-success mx-auto mb-1" />
+                      <p className="text-sm font-medium text-success">+3</p>
+                      <p className="text-xs text-muted-foreground">This week</p>
+                    </div>
+                    <div className="p-3 bg-muted/30 rounded-lg">
+                      <Shield className="h-5 w-5 text-foreground mx-auto mb-1" />
+                      <p className="text-sm font-medium">Industry Avg</p>
+                      <p className="text-xs text-muted-foreground">73</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <h4 className="font-medium mb-3">Weekly Security Trend</h4>
+                  <div className="h-32">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={weeklyData}>
+                        <XAxis dataKey="day" axisLine={false} tickLine={false} />
+                        <YAxis hide />
+                        <Line
+                          type="monotone"
+                          dataKey="score"
+                          stroke="hsl(var(--success))"
+                          strokeWidth={3}
+                          dot={{ fill: 'hsl(var(--success))', strokeWidth: 2, r: 4 }}
+                          activeDot={{ r: 6 }}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </motion.div>
+
+      {/* Unused Keys & Service Accounts */}
+      <motion.div variants={itemVariants}>
+        <Card className="dashboard-card">
+          <CardHeader>
+            <CardTitle className="flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <Key className="h-5 w-5 text-warning" />
+                <span>Security Keys & Accounts</span>
+              </div>
+              <div className="flex items-center space-x-2">
+                {unusedKeys > 0 && (
+                  <Badge className="status-warning">
+                    {unusedKeys} unused
+                  </Badge>
+                )}
+                {expiredKeys > 0 && (
+                  <Badge className="status-critical">
+                    {expiredKeys} expired
+                  </Badge>
+                )}
+              </div>
+            </CardTitle>
+            <CardDescription>
+              Manage unused keys and service accounts to improve security posture
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              {keys.map((key) => (
+                <div
+                  key={key.id}
+                  className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/30 transition-colors"
+                >
+                  <div className="flex items-center space-x-4">
+                    <div className="flex items-center justify-center w-10 h-10 bg-muted/50 rounded-lg">
+                      <Key className="h-5 w-5 text-muted-foreground" />
+                    </div>
+                    
+                    <div>
+                      <div className="flex items-center space-x-2 mb-1">
+                        <p className="font-medium text-foreground">{key.name}</p>
+                        <Badge variant="outline" className="text-xs">{key.type}</Badge>
+                        <Badge className={getKeyStatusColor(key.status)}>
+                          {key.status}
+                        </Badge>
+                      </div>
+                      <div className="flex items-center space-x-4 text-xs text-muted-foreground">
+                        <span>Last used: {key.lastUsed === "Never" 
+                          ? "Never" 
+                          : new Date(key.lastUsed).toLocaleDateString()
+                        }</span>
+                        <span>
+                          {key.expiresIn > 0 ? `Expires in ${key.expiresIn} days` : `Expired ${Math.abs(key.expiresIn)} days ago`}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    {key.status !== 'Active' && (
+                      <Button
+                        size="sm"
+                        onClick={() => handleRotateKey(key.id)}
+                        className="action-primary"
+                      >
+                        <RotateCcw className="h-4 w-4 mr-2" />
+                        Rotate Key
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {keys.filter(k => k.status !== 'Active').length === 0 && (
+              <div className="text-center py-8">
+                <Shield className="h-12 w-12 text-success mx-auto mb-4" />
+                <p className="text-lg font-medium text-success">All keys are secure!</p>
+                <p className="text-sm text-muted-foreground">No unused or expired keys detected</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </motion.div>
     </motion.div>
   );
 }

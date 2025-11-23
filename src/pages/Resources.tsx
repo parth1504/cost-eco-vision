@@ -112,7 +112,7 @@ export function Resources() {
         
         toast({
           title: "Backend Unavailable",
-          description: "restart server to fetch live data",
+          description: "Restart server to fetch live data",
           variant: "destructive",
         });
       } finally {

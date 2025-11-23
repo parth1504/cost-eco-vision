@@ -149,13 +149,12 @@ async def get_overview():
 # ============= Security Data Endpoints =============
 
 @app.get("/security/data")
-def get_security_comprehensive():
+async def get_security_comprehensive():
     """Get comprehensive security data (keys, scores, compliance, recommendations)"""
-    return get_security_data()
+    return await get_security_data()
 
 @app.get("/security")
 async def get_security():
-    # security_data = await security.get_all_findings()
     security_data = await security.get_securiity_findings()
     findings = security_data.get("findings", [])
     

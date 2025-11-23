@@ -19,9 +19,29 @@ session = boto3.Session(
     region_name=aws_region
 )
 
+def replace_placeholders(obj, mapping):
+    """
+    Recursively replace placeholders like {INSTANCE_ID} in strings,
+    lists, and nested dictionaries.
+    """
+    if isinstance(obj, str):
+        for key, value in mapping.items():
+            obj = obj.replace(f"{{{key}}}", value)
+        return obj
+
+    elif isinstance(obj, list):
+        return [replace_placeholders(item, mapping) for item in obj]
+
+    elif isinstance(obj, dict):
+        return {k: replace_placeholders(v, mapping) for k, v in obj.items()}
+
+    else:
+        return obj
+
+
 ec2_recommendations = [
     {
-        "title": "Instance Underutilized — Right-size to t3.small",
+        "title": "Instance Underutilized — Right-size to t3.micro",
         "description": (
             "The instance has consistently low CPU and network utilization for the last 7 days. "
             "Downsizing to a smaller instance type can significantly reduce cost without affecting performance."
@@ -36,11 +56,12 @@ ec2_recommendations = [
             {
                 "step": 1,
                 "command": "aws ec2 stop-instances --instance-ids {INSTANCE_ID}",
+                
                 "description": "Stops the EC2 instance before changing instance type."
             },
             {
                 "step": 2,
-                "command": "aws ec2 modify-instance-attribute --instance-id {INSTANCE_ID} --instance-type \"t3.small\"",
+                "command": "aws ec2 modify-instance-attribute --instance-id {INSTANCE_ID} --instance-type \"t3.micro\"",
                 "description": "Modifies the instance type to a more cost-efficient size."
             },
             {
@@ -48,7 +69,28 @@ ec2_recommendations = [
                 "command": "aws ec2 start-instances --instance-ids {INSTANCE_ID}",
                 "description": "Restarts the instance after applying the change."
             }
-        ]
+        ],
+        "boto3_sequence": [
+            {
+                "service": "ec2",
+                "operation": "stop_instances",
+                "params": { "InstanceIds": ["{INSTANCE_ID}"] }
+            },
+            {
+                "service": "ec2",
+                "operation": "modify_instance_attribute",
+                "params": {
+                    "InstanceId": "{INSTANCE_ID}",
+                    "InstanceType": { "Value": "t3.micro" }
+                }
+            },
+
+            {
+                "service": "ec2",
+                "operation": "start_instances",
+                "params": { "InstanceIds": ["{INSTANCE_ID}"] }
+            }
+            ]
     },
 
     {
@@ -191,7 +233,10 @@ async def list_ec2_instances():
                         "is_optimized": False,
                         "last_activity": launch_time.isoformat() if launch_time else None,
                         "creation_date": launch_time.isoformat() if launch_time else None,
-                        "recommendations": ec2_recommendations
+                        "recommendations": replace_placeholders(
+                        ec2_recommendations,
+                        {"INSTANCE_ID": instance_id}
+                    )
                     }
 
                     saved = save_resource_in_db(instance_id, "EC2", instance_data)
@@ -385,7 +430,10 @@ async def list_s3_buckets():
                     "provider": "AWS",
                     "last_activity": creation_date.isoformat() if creation_date else None,
                     "is_optimized": False,
-                    "recommendations": s3_recommendations
+                    "recommendations": replace_placeholders(
+                        s3_recommendations,
+                        {"BUCKET_NAME": name}
+                    )
                 }
                 save_resource_in_db(name, "S3", bucket_data)
 
@@ -591,7 +639,10 @@ async def list_dynamodb_tables():
                     "item_count": item_count,
                     "table_size_bytes": size_bytes,
                     "last_activity": creation.isoformat() if creation else None,
-                    "recommendations": dynamodb_recommendations
+                    "recommendations": replace_placeholders(
+                        dynamodb_recommendations,
+                        {"TABLE_NAME": name}
+                    )
                 }
 
                 save_resource_in_db(name, "DynamoDB", table_data)

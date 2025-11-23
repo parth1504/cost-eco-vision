@@ -116,7 +116,7 @@ export function CostOptimization() {
       
       toast({
         title: "Backend Unavailable",
-        description: "Using local calculations. Start FastAPI server with: cd src/backend && python main.py",
+        description: "Restart server to fetch live alerts",
         variant: "destructive"
       });
     } finally {

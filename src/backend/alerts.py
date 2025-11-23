@@ -4,6 +4,8 @@ from resources import get_all_resources   # <-- Your existing resources API
 from dynamo import save_resource_in_db, get_resource_from_db
 from decimal import Decimal
 from fastapi import HTTPException
+from aws_executor import apply_aws_commands
+
 
 
 def decimal_to_float(obj):
@@ -40,12 +42,11 @@ async def generate_alerts_from_resources() -> List[Dict[str, Any]]:
                 "saving": rec.get("saving", "N/A"),
                 "resource_type": resource.get("type"),
                 "region": resource.get("region"),
+                "solution_steps": rec.get("solution_steps")
             }
 
             alerts.append(alert)
-
     return alerts
-
 
 async def get_all_alerts() -> List[Dict[str, Any]]:
     """Return dynamically computed alerts (no mock data).""" 
@@ -97,23 +98,29 @@ async def update_alert(alert_id: str, new_status: str):
         # helpful debug message
         raise HTTPException(status_code=404, detail=f"Recommendation titled '{rec_title_raw}' not found in resource {resource_id}")
 
-    # 4) build updated recommendation object (preserve fields, update status + resolved_at)
-    old_rec = rec_list[target_index]
-    updated_rec = { **old_rec }  # shallow copy
-    updated_rec["status"] = new_status.lower()
+    # =============================
+    # 4) Execute AWS commands
+    # =============================
+    solution_steps = rec.get("solution_steps", [])
+    boto3_commands = []
 
+
+    execution_results = await apply_aws_commands(boto3_commands)
+
+    # =============================
+    # 5) Update recommendation status
+    # =============================
+    updated_rec = { **rec }
+    updated_rec["status"] = new_status.lower()
     updated_rec["last_activity"] = datetime.utcnow().isoformat() + "Z"
 
-    # 5) replace in the recommendations array and save resource
     resource["recommendations"][target_index] = updated_rec
-    print(f"Updated recommendation: {updated_rec}")
-    # Ensure save_resource_in_db preserves is_optimized if present (your function should already do this)
+
     save_resource_in_db(
         resource_id=resource_id,
         resource_type=resource_type_found,
-        resource_data=resource
+        resource_data=resource,
     )
-    # 6) return cleaned resource for frontend (convert Decimal -> float if necessary)
     return decimal_to_float(resource)
 
 
