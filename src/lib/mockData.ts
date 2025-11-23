@@ -23,12 +23,13 @@ export interface Resource {
   id: string;
   name: string;
   type: "EC2" | "RDS" | "S3" | "Lambda" | "ELB" | "DynamoDB";
-  status: "Running" | "Idle" | "Stopped" | "Optimized";
+  status: "Running" | "Idle" | "Stopped" | "optimized";
   utilization: number;
   monthly_cost: number;
   region: string;
   provider?: "AWS" | "GCP" | "Azure";
   lastActivity: string;
+
 
   // NEW: Rich Recommendation Object
   recommendations: Array<{
@@ -43,6 +44,11 @@ export interface Resource {
       step: number;
       description: string;
       command: string;
+    }>;
+    boto3Commands?: Array<{
+      service: string;
+  operation: string;
+  params: Record<string, any>;
     }>;
   }>;
 

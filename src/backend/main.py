@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException, Query,Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, Body
+from datetime import datetime
 from dynamo import get_resource_from_db, save_resource_in_db
 from decimal import Decimal
 from typing import Dict, Any, Optional
@@ -15,6 +16,7 @@ from incident import get_incident_data
 from drift import get_drift_data
 from leaderboard import get_leaderboard
 from security import get_security_data
+from aws_executor import apply_aws_commands
 
 from agent_integration.agent_client import StrandsAgentClient
 from agent_integration.agent_logic import AgentLogic
@@ -48,7 +50,7 @@ def root():
 # Resources endpoints
 
 @app.get("/resources")
-async def get_resources(use_agent: bool = Query(False, description="Enable AI-driven insights via AWS Strands Agent")):
+async def get_resources():
     print("Fetching all resources...")
     resources_data = await resources.get_all_resources() ##from aws
 
@@ -76,34 +78,53 @@ def decimal_to_float(obj):
 
 
 @app.put("/resources/{resource_id}/optimize")
-def optimize_resource_api(resource_id: str, data: dict = Body(...)):
+async def optimize_resource_api(resource_id: str, data: dict = Body(...)):
     resource_type = data.get("resource_type")
 
     if not resource_type:
         raise HTTPException(status_code=400, detail="resource_type is required")
 
-    # Fetch stored resource from DynamoDB
+    # Load resource
     resource = get_resource_from_db(resource_id, resource_type)
-    print("Optimizing resource:", resource)
-
     if not resource:
-        raise HTTPException(status_code=404, detail="Resource not found in DynamoDB")
+        raise HTTPException(status_code=404, detail="Resource not found")
 
-    # Apply optimization
-    resource["is_optimized"] = True
-    resource["recommendations"] = []
+    print(f"🚀 Starting full optimization for resource {resource_id}")
 
+    recommendations = resource.get("recommendations", [])
+
+    for rec in recommendations:
+        boto_sequence = rec.get("boto3_sequence")
+
+        # Skip recommendations that have no AWS actions
+        if not boto_sequence:
+            continue
+
+        print(f"⚡ Running AWS automation for: {rec.get('title')}")
+
+        # Apply AWS commands (list of dicts)
+        results = await apply_aws_commands(boto_sequence)
+
+        # Check if every command succeeded
+        all_success = all(r.get("success") for r in results)
+
+        if all_success:
+            print(f"✅ Optimization successful: {rec.get('title')}")
+            rec["status"] = "resolved"
+            rec["last_activity"] = datetime.utcnow().isoformat() + "Z"
+        else:
+            print(f"❌ Failed to optimize: {rec.get('title')}")
+            rec["status"] = "active"   # keep it unresolved
+    resource["status"] = "optimized"
     # Save updated resource back to DynamoDB
     save_resource_in_db(
-    resource_id=resource_id,
-    resource_type=resource_type,
-    resource_data=resource   
-)
+        resource_id=resource_id,
+        resource_type=resource_type,
+        resource_data=resource
+    )
 
-    # Convert Decimal → float before returning to frontend
-    cleaned_resource = decimal_to_float(resource)
-
-    return cleaned_resource
+    # Return cleaned resource for UI
+    return decimal_to_float(resource)
 
 
 # Alerts endpoints

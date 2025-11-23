@@ -47,7 +47,7 @@ const getStatusColor = (status: Resource['status']) => {
     case 'Running': return 'status-success';
     case 'Idle': return 'status-warning';
     case 'Stopped': return 'bg-muted text-muted-foreground';
-    case 'Optimized': return 'status-eco';
+    case 'optimized': return 'status-eco';
     default: return 'bg-muted text-muted-foreground';
   }
 };
@@ -93,15 +93,15 @@ export function Resources() {
         const transformedResources: Resource[] = data.map((resource: any) => ({
           id: resource.resource_id,
           name: resource.name,
-          type: resource.type as Resource['type'],
-          status: resource.status as Resource['status'],
+          type: resource.resource_type,
+          status: resource.status,
           utilization: resource.utilization,
           monthly_cost: resource.monthly_cost,
           region: resource.region,
           recommendations: resource.recommendations,
           lastActivity: resource.last_activity,
           provider: resource.provider,
-          commands: resource.commands
+          commands: resource.commands,
         }));
         
         setResources(transformedResources);
@@ -126,8 +126,13 @@ export function Resources() {
   const handleOptimize = async (resourceId: string, action: string) => {
     try {
       const resource = resources.find(r => r.id === resourceId);
-      const savings = resource ? Math.round((resource.monthly_cost * 0.3)) : 0;
-
+      const savings = resource?.recommendations
+      ?.reduce((sum, rec) => {
+        const val = Number(rec.saving);
+        return sum + (isNaN(val) ? 0 : val);
+      }, 0) ?? 0;
+      console.log("savings:", savings);
+      console.log("resource:", resource.type);
       const response = await fetch(`http://localhost:8000/resources/${resourceId}/optimize`, {
       method: "PUT",
       headers: {
@@ -187,8 +192,8 @@ export function Resources() {
   const totalMonthlyCost = resources.reduce((sum, r) => sum + r.monthly_cost, 0);
   const runningResources = resources.filter(r => r.status === 'running' || r.status==='active' || r.status==='available').length;
   const idleResources = resources.length-runningResources;
-  const optimizedResources = resources.filter(r => r.is_optimized).length;
-  // const optimizedResources = resources.filter(r => r.status === 'Optimized').length;
+  // const optimizedResources = resources.filter(r => r.is_optimized).length;
+  const optimizedResources = resources.filter(r => r.status === 'optimized').length;
 
   if (loading) {
     return (
@@ -342,33 +347,53 @@ export function Resources() {
                     </div>
 
                     {/* Recommendations */}
-                    {resource.recommendations && resource.recommendations.length > 0 && (
-                    <div>
-                      <p className="text-sm font-medium text-foreground mb-2">
-                        {resource.recommendations.length} Recommendation
-                        {resource.recommendations.length !== 1 ? "s" : ""}
-                      </p>
+                    {/* Filter out only active (not resolved) recommendations */}
+                    {resource.recommendations &&
+                      resource.recommendations.filter((r) => r.status !== "resolved").length > 0 && (
+                        <div>
+                          <p className="text-sm font-medium text-foreground mb-2">
+                            {
+                              resource.recommendations.filter((r) => r.status !== "resolved")
+                                .length
+                            }{" "}
+                            Recommendation
+                            {resource.recommendations.filter((r) => r.status !== "resolved")
+                              .length !== 1
+                              ? "s"
+                              : ""}
+                          </p>
 
-                      {/* Show the first recommendation title */}
-                      <p className="text-xs text-muted-foreground line-clamp-2">
-                        {resource.recommendations[0].title}
-                      </p>
-                    </div>
-                  )}
+                          {/* First unresolved recommendation */}
+                          <p className="text-xs text-muted-foreground line-clamp-2">
+                            {
+                              resource.recommendations.filter((r) => r.status !== "resolved")[0]
+                                .title
+                            }
+                          </p>
+                        </div>
+                    )}
+
 
 
                     {/* Action Button */}
                     <Button
                     className="w-full mt-4"
                     variant={resource.is_optimized ? "outline" : "default"}
-                    disabled={false} // keep clickable so user can still view details
+                    disabled={false}
                     onClick={(e) => {
                       e.stopPropagation();
                       setSelectedResource(resource);
                     }}
                   >
-                  
-                    {resource.is_optimized ? "View Details" : "Optimize"}
+                    {
+                      // Determine if ALL recommendations are resolved
+                      resource.recommendations &&
+                      resource.recommendations.every((r) => r.status === "resolved")
+                        ? "View Details"
+                        : resource.is_optimized
+                        ? "View Details"
+                        : "Optimize"
+                    }
                   </Button>
 
                   </CardContent>
@@ -591,7 +616,7 @@ export function Resources() {
 
                   {/* Actions */}
                   <div className="flex space-x-3">
-                    {selectedResource.status !== 'Optimized' ? (
+                    {selectedResource.status !== 'optimized' ? (
                       <>
                         <Button
                           onClick={() => handleOptimize(selectedResource.id, "Right-sizing")}
