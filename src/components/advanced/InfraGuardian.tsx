@@ -51,30 +51,57 @@ export function InfraGuardian() {
     }
   };
 
-  const handleAutoFix = (driftId: string) => {
-    setDrifts(prev => prev.filter(d => d.id !== driftId));
-    
-    // Simulate PR creation
-    const prNumber = Math.floor(Math.random() * 1000) + 100;
-    
+  const handleAutoFix = async (driftId: string) => {
+  try {
+    const response = await fetch("http://localhost:8000/drift/autofix", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ drift_id: driftId }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Backend returned ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    // show success
     toast({
-      title: "🚀 Auto-Fix Initiated",
+      title: "🚀 Auto-Fix Triggered",
       description: (
         <div className="space-y-2">
-          <p>Pull request #PR-{prNumber} created successfully</p>
-          <Button
-            variant="link"
-            size="sm"
-            className="p-0 h-auto text-primary"
-            onClick={() => window.open(`https://github.com/your-org/infrastructure/pull/${prNumber}`, '_blank')}
-          >
-            <ExternalLink className="h-3 w-3 mr-1" />
-            View PR on GitHub
-          </Button>
+          <p>{data.message}</p>
+
+          {data.pull_request_url && (
+            <Button
+              variant="link"
+              size="sm"
+              className="p-0 h-auto text-primary"
+              onClick={() => window.open(data.pull_request_url, "_blank")}
+            >
+              <ExternalLink className="h-3 w-3 mr-1" />
+              View PR on GitHub
+            </Button>
+          )}
         </div>
-      )
+      ),
     });
-  };
+
+    // remove drift from list dynamically
+    setDrifts((prev) => prev.filter((d) => d.id !== driftId));
+
+  } catch (err: any) {
+    console.error("Auto-fix failed:", err);
+    toast({
+      title: "❌ Auto-Fix Failed",
+      description: err.message,
+      variant: "destructive",
+    });
+  }
+};
+
 
   if (loading) {
     return <div className="text-center text-muted-foreground">Loading drift detection data...</div>;

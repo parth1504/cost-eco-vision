@@ -132,12 +132,12 @@ export function Security() {
   };
   const handleFixFinding = async (findingId: string) => {
     try {
-      const response = await fetch("http://localhost:8000/security/update", {
-        method: "POST",
+      console.log("🔄 Sending fix request to backend for finding ID:", findingId);
+      const response = await fetch(`http://localhost:8000/security/${findingId}`, {
+        method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          finding_id: findingId,
-          updates: { status: "Fixed" }
+          status: "resolved",
         })
       });
 

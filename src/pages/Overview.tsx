@@ -287,7 +287,7 @@ export function Overview() {
                     <th>Recommendation</th>
                     <th>Estimated Savings</th>
                     <th>Impact</th>
-                    <th>Action</th>
+                    {/* <th>Action</th> */}
                   </tr>
                 </thead>
                 <tbody>
@@ -321,11 +321,11 @@ export function Overview() {
                           {rec.impact}
                         </Badge>
                       </td>
-                      <td>
+                      {/* <td>
                         <Button size="sm" className="action-success">
                           Apply Fix
                         </Button>
-                      </td>
+                      </td> */}
                     </tr>
                   ))}
                 </tbody>

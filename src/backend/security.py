@@ -2,6 +2,10 @@
 import boto3
 import json
 from datetime import datetime, timezone
+
+from botocore.exceptions import ClientError
+from aws_executor import apply_aws_commands
+
 s3 = boto3.client("s3")
 ec2 = boto3.client("ec2")
 iam = boto3.client("iam")
@@ -9,6 +13,24 @@ dynamodb = boto3.client("dynamodb")
 acm = boto3.client("acm")
 
 
+def replace_placeholders(obj, mapping):
+    """
+    Recursively replace placeholders like {INSTANCE_ID} in strings,
+    lists, and nested dictionaries.
+    """
+    if isinstance(obj, str):
+        for key, value in mapping.items():
+            obj = obj.replace(f"{{{key}}}", value)
+        return obj
+
+    elif isinstance(obj, list):
+        return [replace_placeholders(item, mapping) for item in obj]
+
+    elif isinstance(obj, dict):
+        return {k: replace_placeholders(v, mapping) for k, v in obj.items()}
+
+    else:
+        return obj
 
 async def fetch_iam_access_keys():
     all_keys = []
@@ -124,9 +146,8 @@ async def _iam_user_is_over_permissive(user_name):
     """
     try:
         # 1) check attached managed policies
-        attached = await iam.list_attached_user_policies(UserName=user_name).get("AttachedPolicies", [])
+        attached = iam.list_attached_user_policies(UserName=user_name).get("AttachedPolicies", [])
         for p in attached:
-            print("Checking policy:", p)
             pname = p.get("PolicyName", "").lower()
             if "administratoraccess" in pname or "admin" == pname:
                 return True
@@ -176,7 +197,54 @@ async def build_s3_bucket_finding(bucket_name):
                 f"aws s3api put-bucket-encryption --bucket {bucket_name} "
                 "--server-side-encryption-configuration "
                 "'{\"Rules\":[{\"ApplyServerSideEncryptionByDefault\":{\"SSEAlgorithm\":\"AES256\"}}]}'"
-            )
+            ),
+            "boto3_commands":[
+                {
+                    "service": "s3",
+                    "operation": "put_bucket_encryption",
+                    "params": {
+                        "Bucket": "{bucket_name}",
+                        "ServerSideEncryptionConfiguration": {
+                            "Rules": [
+                                {
+                                    "ApplyServerSideEncryptionByDefault": {
+                                        "SSEAlgorithm": "AES256"
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                },
+                {
+                    "service": "s3",
+                    "operation": "get_bucket_encryption",
+                    "params": {
+                        "Bucket": "{bucket_name}"
+                    }
+                },
+                {
+                    "service": "s3",
+                    "operation": "put_public_access_block",
+                    "params": {
+                        "Bucket": "{bucket_name}",
+                        "PublicAccessBlockConfiguration": {
+                            "BlockPublicAcls": True,
+                            "IgnorePublicAcls": True,
+                            "BlockPublicPolicy": True,
+                            "RestrictPublicBuckets": True
+                        }
+                    }
+                },
+                {
+                    "service": "s3",
+                    "operation": "put_bucket_acl",
+                    "params": {
+                        "Bucket": "{bucket_name}",
+                        "ACL": "private"
+                    }
+                }
+            ]
+
         },
         {
             "step": 2,
@@ -185,7 +253,7 @@ async def build_s3_bucket_finding(bucket_name):
         }
     ]
     finding = {
-        "id": f"s3-unenc-{bucket_name}",
+        "id": bucket_name,
         "title": "S3 Bucket Not Encrypted",
         "severity": "High",
         "description": f"Bucket {bucket_name} does not have server-side encryption enabled.",
@@ -226,7 +294,7 @@ async def build_sg_finding(sg):
         }
     ]
     finding = {
-        "id": f"sg-open-{sg_id}",
+        "id": {sg_id},
         "title": "Overly Permissive Security Group",
         "severity": "Critical",
         "description": f"Security group {sg_name} ({sg_id}) allows inbound traffic from 0.0.0.0/0.",
@@ -246,6 +314,7 @@ async def build_sg_finding(sg):
 
 async def build_iam_user_finding(user_name):
     """Return finding dict if user over-permissive, else None"""
+    print("Building IAM user finding for:", user_name)
     over = await _iam_user_is_over_permissive(user_name)
     status = "Open" if over else "Fixed"
     # remediation steps to detach admin and attach readonly
@@ -253,8 +322,17 @@ async def build_iam_user_finding(user_name):
         {
             "step": 1,
             "description": "Detach AdministratorAccess managed policy from the user.",
-            "command": f"aws iam detach-user-policy --user-name {user_name} --policy-arn arn:aws:iam::aws:policy/AdministratorAccess"
+            "command": f"aws iam detach-user-policy --user-name {user_name} --policy-arn arn:aws:iam::aws:policy/AdministratorAccess",
+            "boto3_commands": [{
+            "service": "iam",
+            "operation": "detach_user_policy",
+            "params": {
+                "UserName": "{user_name}",
+                "PolicyArn": "arn:aws:iam::aws:policy/AdministratorAccess"
+            }}],
         },
+
+        
         {
             "step": 2,
             "description": "Attach ReadOnlyAccess managed policy to the user.",
@@ -267,7 +345,7 @@ async def build_iam_user_finding(user_name):
         }
     ]
     finding = {
-        "id": f"iam-perm-{user_name}",
+        "id": user_name,
         "title": "IAM User with Overly Permissive Permissions",
         "severity": "High",
         "description": f"IAM user {user_name} has admin-like or wildcard permissions.",
@@ -338,11 +416,42 @@ def get_finding_by_id(finding_id: str):
     """Return a specific finding by ID"""
     return next((f for f in mock_security_findings if f["id"] == finding_id), None)
 
-def update_finding(finding_id: str, updates: dict):
+## to update security finding status
+async def update_finding(finding_id: str,new_status: str):
     """Update a finding with new data"""
-    for finding in mock_security_findings:
-        if finding["id"] == finding_id:
-            finding.update(updates)
+    result = await get_securiity_findings()
+    findings = result["findings"]
+    for finding in findings:
+        id=finding["id"]
+        if id == finding_id:
+            if finding["resource_type"]=="S3":
+                bucket_name=finding["resource"]
+                all_commands = []
+                for step in finding["remediation"]["steps"]:
+                    boto_cmds = step.get("boto3_commands", [])
+                    resolved = replace_placeholders(boto_cmds, {"bucket_name": bucket_name})
+                    all_commands.extend(resolved)
+                
+            if finding["resource_type"]=="SecurityGroup":
+                sg_id=finding["resource"]
+                all_commands = []
+                for step in finding["remediation"]["steps"]:
+                    boto_cmds = step.get("boto3_commands", [])
+                    resolved = replace_placeholders(boto_cmds, {"sg_id": sg_id})
+                    all_commands.extend(resolved)
+            if finding["resource_type"]=="IAMUser":
+                user_name=finding["resource"]
+                print("Preparing to resolve IAM user remediation for:", user_name)
+                all_commands = []
+                for step in finding["remediation"]["steps"]:
+                    boto_cmds = step.get("boto3_commands", [])
+                    print("Boto3 commands for step:", boto_cmds)
+                    resolved = replace_placeholders(boto_cmds, {"user_name": user_name})
+                    all_commands.extend(resolved)
+            print("Resolving AWS commands for remediation:", all_commands)
+            await apply_aws_commands(all_commands)
+            finding["status"]=new_status
+
             return finding
     return None
 

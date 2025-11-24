@@ -174,6 +174,7 @@ async def get_security_comprehensive():
     """Get comprehensive security data (keys, scores, compliance, recommendations)"""
     return await get_security_data()
 
+##to get all security findings
 @app.get("/security")
 async def get_security():
     security_data = await security.get_securiity_findings()
@@ -189,13 +190,30 @@ async def get_security_finding(finding_id: str):
         raise HTTPException(status_code=404, detail="Security finding not found")
     return finding
 
-@app.post("/security/update")
-async def update_security_finding(finding_id: str, updates: Dict[str, Any]):
-    finding = await security.update_finding(finding_id, updates)
+## to update security finding status
+@app.put("/security/{finding_id}")
+async def update_security_finding(finding_id: str, payload: dict = Body(...)):
+    print("Updating security finding:", finding_id)
+    status = payload.get("status")
+    if not status:
+        raise HTTPException(status_code=422, detail="Missing 'status' in request body")
+    
+    finding = await security.update_finding(finding_id,status)
     if not finding:
         raise HTTPException(status_code=404, detail="Security finding not found")
     return {"success": True, "finding": finding}
 
+# @app.put("/alerts/{alert_id}")
+# async def update_alert(alert_id: str, payload: dict = Body(...)):
+#     print("Updating alert:", alert_id)
+#     status = payload.get("status")
+#     if not status:
+#         raise HTTPException(status_code=422, detail="Missing 'status' in request body")
+
+#     alert = await alerts.update_alert(alert_id, status)
+#     if not alert:
+#         raise HTTPException(status_code=404, detail="Alert not found")
+#     return alert
 
 @app.get("/health")
 def health_check():
@@ -214,6 +232,47 @@ def health_check():
 def get_incident():
     """Get incident room data (timeline, root cause, checklist)"""
     return get_incident_data()
+from fastapi import APIRouter, Response
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+import io
+
+
+@app.get("/incident/report")
+def generate_incident_report():
+    buffer = io.BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=letter)
+
+    pdf.setFont("Helvetica-Bold", 16)
+    pdf.drawString(50, 750, "Incident Report – Public S3 Bucket Access")
+
+    pdf.setFont("Helvetica", 12)
+    y = 720
+
+    sections = [
+        "Incident ID: INC-2024-001",
+        "Severity: CRITICAL",
+        "Primary Cause: Public READ ACL on S3 bucket backup-storage-0189",
+        "Contributing Factors:",
+        "- Block Public Access disabled",
+        "- Anonymous AllUsers READ permission",
+        "- Missing encryption",
+        "Immediate Actions:",
+        "- Removed public ACL",
+        "- Enabled Block Public Access",
+        "- Enabled SSE-S3 encryption",
+        "Resolution: Confirmed by IAM Analyzer",
+    ]
+
+    for line in sections:
+        pdf.drawString(50, y, line)
+        y -= 20
+
+    pdf.showPage()
+    pdf.save()
+    buffer.seek(0)
+
+    return Response(content=buffer.getvalue(), media_type="application/pdf")
 
 # ============= Drift Detection Endpoints =============
 
@@ -221,6 +280,25 @@ def get_incident():
 def get_drift():
     """Get infrastructure drift detection data"""
     return get_drift_data()
+
+from drift import apply_ec2_drift_fix, create_github_pr
+@app.post("/drift/autofix")
+async def autofix_drift():
+    updated = apply_ec2_drift_fix()
+
+    if updated is None:
+        raise HTTPException(status_code=400, detail="No drift found")
+
+    try:
+        # pr_info = create_github_pr(updated)
+        return {
+            "success": True,
+            "message": "AutoFix PR created",
+            "pr_url": pr_info["pr_url"]
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ============= Leaderboard Endpoints =============
 
