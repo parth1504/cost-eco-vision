@@ -148,7 +148,7 @@ export function Overview() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-eco">
-              {isLoading ? "..." : `${Math.round(savingsData.co2Reduced * activities.length)} tons`}
+              {isLoading ? "..." : `${Math.round(savingsData.co2Reduced * activities.length)} kgs`}
             </div>
             <div className="flex items-center space-x-2 text-xs text-muted-foreground">
               <TrendingUp className="h-3 w-3 text-eco" />

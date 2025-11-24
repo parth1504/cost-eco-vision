@@ -163,7 +163,7 @@ export function CostOptimization() {
 
       toast({
         title: "🎉 Optimization Plan Applied!",
-        description: `Your plan will save $6/month and reduce CO₂ by 3 tons annually.`,
+        description: `Your plan will save $6/month and reduce CO₂ by 3 kgs annually.`,
       });
     } catch (error) {
       console.error("Failed to apply optimization:", error);
@@ -412,7 +412,7 @@ export function CostOptimization() {
               <div className="text-center">
                 <div className="text-xl font-bold text-eco flex items-center justify-center space-x-2">
                   <Leaf className="h-5 w-5" />
-                  <span>{projectedSavings.co2} tons</span>
+                  <span>{projectedSavings.co2} kgs</span>
                 </div>
                 <p className="text-sm text-muted-foreground">CO₂ reduction/year</p>
               </div>
