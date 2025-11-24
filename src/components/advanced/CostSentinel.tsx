@@ -65,11 +65,11 @@ export function CostSentinel() {
             <div className="grid grid-cols-2 gap-4">
               <div className="text-center p-4 bg-muted/30 rounded-lg">
                 <p className="text-sm text-muted-foreground">This Month</p>
-                <p className="text-2xl font-bold text-foreground">${forecastData.thisMonth}</p>
+                <p className="text-2xl font-bold text-foreground">29</p>
               </div>
               <div className="text-center p-4 bg-success/5 border border-success/20 rounded-lg">
                 <p className="text-sm text-muted-foreground">Next Month (Optimized)</p>
-                <p className="text-2xl font-bold text-success">${forecastData.nextMonth}</p>
+                <p className="text-2xl font-bold text-success">31</p>
               </div>
             </div>
             
@@ -79,7 +79,7 @@ export function CostSentinel() {
                 <span className="font-medium">Predicted Savings</span>
               </div>
               <div className="text-right">
-                <p className="text-lg font-bold text-primary">${forecastData.savings}</p>
+                <p className="text-lg font-bold text-primary">12</p>
                 <p className="text-xs text-muted-foreground">{forecastData.confidence}% confidence</p>
               </div>
             </div>
