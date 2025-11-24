@@ -265,7 +265,7 @@ export function CostOptimization() {
               </div>
               <div className="p-4 bg-primary/5 border border-primary/20 rounded-lg">
                 <p className="text-sm text-primary font-medium">
-                  Projected savings: ${Math.round((rightSizingLevel[0] / 100) * 4)}/month
+                  Projected savings: $30/month
                 </p>
               </div>
             </CardContent>
@@ -300,7 +300,7 @@ export function CostOptimization() {
                       ✓ Schedule detected: Stop dev/test resources 6 PM - 8 AM
                     </p>
                     <p className="text-xs text-muted-foreground mt-1">
-                      Estimated savings: $156/month
+                      Estimated savings: $15/month
                     </p>
                   </div>
                 </div>
