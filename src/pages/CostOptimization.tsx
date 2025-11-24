@@ -84,11 +84,11 @@ export function CostOptimization() {
         let co2Reduction = 0;
 
         if (idleResourcesEnabled) {
-          monthlySavings += 245;
+          monthlySavings += 2;
           co2Reduction += 0.8;
         }
 
-        monthlySavings += (rightSizingLevel[0] / 100) * 400;
+        monthlySavings += (rightSizingLevel[0] / 100) * 4;
         co2Reduction += (rightSizingLevel[0] / 100) * 1.2;
 
         if (schedulingEnabled) {
@@ -96,7 +96,7 @@ export function CostOptimization() {
           co2Reduction += 0.5;
         }
 
-        monthlySavings += (autoScalingLevel[0] / 100) * 300;
+        monthlySavings += (autoScalingLevel[0] / 100) * 3;
         co2Reduction += (autoScalingLevel[0] / 100) * 0.9;
 
         if (storageOptEnabled) {
@@ -108,7 +108,7 @@ export function CostOptimization() {
           monthly: Math.round(monthlySavings),
           yearly: Math.round(monthlySavings * 12),
           co2: Math.round(co2Reduction * 10) / 10,
-          optimization_score: Math.min(95, Math.round((monthlySavings / 1190) * 100))
+          optimization_score: Math.min(95, Math.round((monthlySavings / 1190) * 2))
         };
       };
       
@@ -218,7 +218,7 @@ export function CostOptimization() {
               <CardContent className="pt-0">
                 <div className="p-4 bg-success/5 border border-success/20 rounded-lg">
                   <p className="text-sm text-success font-medium">
-                    ✓ Potential monthly savings: $245
+                    ✓ Potential monthly savings: $18
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">
                     3 idle instances identified for optimization
@@ -265,7 +265,7 @@ export function CostOptimization() {
               </div>
               <div className="p-4 bg-primary/5 border border-primary/20 rounded-lg">
                 <p className="text-sm text-primary font-medium">
-                  Projected savings: ${Math.round((rightSizingLevel[0] / 100) * 400)}/month
+                  Projected savings: ${Math.round((rightSizingLevel[0] / 100) * 4)}/month
                 </p>
               </div>
             </CardContent>
@@ -375,7 +375,7 @@ export function CostOptimization() {
                     ✓ Archive old data to cheaper storage tiers
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Estimated savings: $89/month
+                    Estimated savings: $8/month
                   </p>
                 </div>
               </CardContent>
@@ -397,14 +397,14 @@ export function CostOptimization() {
             <CardContent className="space-y-6">
               <div className="text-center">
                 <div className="text-3xl font-bold text-success">
-                  ${projectedSavings.monthly}
+                  8
                 </div>
                 <p className="text-sm text-muted-foreground">per month</p>
               </div>
 
               <div className="text-center">
                 <div className="text-2xl font-bold text-primary">
-                  ${projectedSavings.yearly}
+                  96
                 </div>
                 <p className="text-sm text-muted-foreground">per year</p>
               </div>
