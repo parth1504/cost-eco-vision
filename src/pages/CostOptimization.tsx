@@ -163,7 +163,7 @@ export function CostOptimization() {
 
       toast({
         title: "🎉 Optimization Plan Applied!",
-        description: `Your plan will save $${projectedSavings.monthly}/month and reduce CO₂ by ${projectedSavings.co2} tons annually.`,
+        description: `Your plan will save $6/month and reduce CO₂ by 3 kgs annually.`,
       });
     } catch (error) {
       console.error("Failed to apply optimization:", error);
@@ -265,7 +265,7 @@ export function CostOptimization() {
               </div>
               <div className="p-4 bg-primary/5 border border-primary/20 rounded-lg">
                 <p className="text-sm text-primary font-medium">
-                  Projected savings: ${Math.round((rightSizingLevel[0] / 100) * 4)}/month
+                  Projected savings: $30/month
                 </p>
               </div>
             </CardContent>
@@ -332,8 +332,8 @@ export function CostOptimization() {
                 <Slider
                   id="autoscaling"
                   min={0}
-                  max={100}
-                  step={10}
+                  max={10}
+                  step={1}
                   value={autoScalingLevel}
                   onValueChange={setAutoScalingLevel}
                   className="w-full"
@@ -412,7 +412,7 @@ export function CostOptimization() {
               <div className="text-center">
                 <div className="text-xl font-bold text-eco flex items-center justify-center space-x-2">
                   <Leaf className="h-5 w-5" />
-                  <span>{projectedSavings.co2} tons</span>
+                  <span>{projectedSavings.co2} kgs</span>
                 </div>
                 <p className="text-sm text-muted-foreground">CO₂ reduction/year</p>
               </div>

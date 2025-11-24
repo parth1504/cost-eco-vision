@@ -466,7 +466,7 @@ export function Security() {
                     <span className="text-sm font-medium text-primary">Dual Benefit</span>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Security fixes can save $156/month in compliance costs
+                    Security fixes can save $15/month in compliance costs
                   </p>
                 </div>
               </div>
