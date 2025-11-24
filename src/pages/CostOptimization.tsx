@@ -221,7 +221,7 @@ export function CostOptimization() {
                     ✓ Potential monthly savings: $18
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    3 idle instances identified for optimization
+                    1 idle instances identified for optimization
                   </p>
                 </div>
               </CardContent>
@@ -300,7 +300,7 @@ export function CostOptimization() {
                       ✓ Schedule detected: Stop dev/test resources 6 PM - 8 AM
                     </p>
                     <p className="text-xs text-muted-foreground mt-1">
-                      Estimated savings: $156/month
+                      Estimated savings: $15/month
                     </p>
                   </div>
                 </div>
