@@ -6,7 +6,7 @@ mock_drift_detections = [
     "resourceType": "EC2",
     "driftType": "Configuration",
     "severity": "High",
-    "actualValue": "InstanceType: t3.small",
+    "actualValue": "InstanceType: t3.large",
     "expectedValue": "InstanceType: t3.micro",
     "lastSync": "2024-01-14T08:45:00Z"
 },
