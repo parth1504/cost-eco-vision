@@ -11,7 +11,7 @@ mock_leaderboard_entries = [
     },
     {
         "id": "team-2",
-        "team": "Data Engineering",
+        "team": "Devops",
         "user": "Parth Shah",
         "savings": 21,
         "optimizations": 2,
@@ -19,7 +19,7 @@ mock_leaderboard_entries = [
     },
     {
         "id": "team-3",
-        "team": "Mobile Team",
+        "team": "SRE",
         "user": "Vedant Kadam",
         "savings": 19,
         "optimizations": 2,
@@ -27,7 +27,7 @@ mock_leaderboard_entries = [
     },
     {
         "id": "team-4",
-        "team": "Web Frontend",
+        "team": "Integrations",
         "user": "Aarav Joshi",
         "savings": 6,
         "optimizations": 1,
