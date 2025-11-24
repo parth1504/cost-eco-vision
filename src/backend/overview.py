@@ -11,13 +11,12 @@ mock_savings_data = {
     "co2Reduced": 2.4,
     "totalOptimizations": 23,
     "chartData": [
-        {"month": "Jul", "savings": 800},
-        {"month": "Aug", "savings": 950},
-        {"month": "Sep", "savings": 1100},
-        {"month": "Oct", "savings": 1050},
-        {"month": "Nov", "savings": 1300},
-        {"month": "Dec", "savings": 1234}
-    ]
+        { "month": "Jul", "savings": 25 },
+        { "month": "Aug", "savings": 24 },
+        { "month": "Sep", "savings": 31 },
+        { "month": "Oct", "savings": 30 },
+        { "month": "Nov", "savings": 22 }
+        ]
 }
 
 mock_activities = [

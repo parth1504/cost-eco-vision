@@ -36,7 +36,7 @@ export function Settings() {
   const [monthlyReportsEnabled, setMonthlyReportsEnabled] = useState(false);
   const [criticalAlertsSlack, setCriticalAlertsSlack] = useState(false);
   const [weeklySlackSummary, setWeeklySlackSummary] = useState(false);
-  const [emailAddress, setEmailAddress] = useState("admin@company.com");
+  const [emailAddress, setEmailAddress] = useState("pranali0809shinde.com");
   const [slackWebhookUrl, setSlackWebhookUrl] = useState("");
 
   // Scheduling Settings

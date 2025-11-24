@@ -74,12 +74,12 @@ export function InfraGuardian() {
         <div className="space-y-2">
           <p>{data.message}</p>
 
-          {data.pull_request_url && (
+          {data.pr_url && (
             <Button
               variant="link"
               size="sm"
               className="p-0 h-auto text-primary"
-              onClick={() => window.open(data.pull_request_url, "_blank")}
+              onClick={() => window.open(data.pr_url, "_blank")}
             >
               <ExternalLink className="h-3 w-3 mr-1" />
               View PR on GitHub
