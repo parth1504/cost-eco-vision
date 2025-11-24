@@ -163,7 +163,7 @@ export function CostOptimization() {
 
       toast({
         title: "🎉 Optimization Plan Applied!",
-        description: `Your plan will save $${projectedSavings.monthly}/month and reduce CO₂ by ${projectedSavings.co2} tons annually.`,
+        description: `Your plan will save $6/month and reduce CO₂ by 3 tons annually.`,
       });
     } catch (error) {
       console.error("Failed to apply optimization:", error);
@@ -332,8 +332,8 @@ export function CostOptimization() {
                 <Slider
                   id="autoscaling"
                   min={0}
-                  max={100}
-                  step={10}
+                  max={10}
+                  step={1}
                   value={autoScalingLevel}
                   onValueChange={setAutoScalingLevel}
                   className="w-full"
