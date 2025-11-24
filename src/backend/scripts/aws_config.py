@@ -14,7 +14,7 @@ def create_ec2_instance():
   
     response = ec2.run_instances(
         ImageId="ami-08d2d8b00f334313",
-        InstanceType="t3.micro",  
+        InstanceType="t3.small",  
         MinCount=1,
         MaxCount=1,
         TagSpecifications=[
