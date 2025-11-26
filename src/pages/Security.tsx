@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Shield, AlertTriangle, CheckCircle, Eye, Lock, FileText, DollarSign } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Progress } from "@/components/ui/progress";
-import { mockSecurityFindings, SecurityFinding } from "@/lib/mockData";
+import { SecurityFinding } from "@/lib/mockData";
 import { useToast } from "@/hooks/use-toast";
 import { ComplianceWatchdog } from "@/components/advanced/ComplianceWatchdog";
 
@@ -50,21 +50,113 @@ const getSeverityIcon = (severity: SecurityFinding['severity']) => {
 };
 
 export function Security() {
-  const [findings, setFindings] = useState<SecurityFinding[]>(mockSecurityFindings);
+  const [findings, setFindings] = useState<SecurityFinding[]>([]);
+  const [loading, setLoading] = useState(true);
   const { toast } = useToast();
 
-  const handleFixFinding = (findingId: string) => {
-    setFindings(prev => prev.map(finding => 
-      finding.id === findingId 
-        ? { ...finding, status: "Fixed" as const }
-        : finding
-    ));
-    
-    const finding = findings.find(f => f.id === findingId);
-    toast({
-      title: "Security Issue Fixed",
-      description: `${finding?.title} has been resolved successfully.`,
-    });
+  useEffect(() => {
+    fetchSecurityData();
+  }, []);
+
+  const fetchSecurityData = async () => {
+    try {
+      console.log("🔄 Attempting to fetch security data from backend...");
+      const response = await fetch("http://localhost:8000/security", {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Backend returned ${response.status}`);
+      }
+      
+      const data = await response.json();
+      console.log("✅ Successfully fetched security findings from backend:", data.findings?.length, "findings");
+      setFindings(data.findings);
+    } catch (error) {
+      console.error("❌ Failed to fetch from backend:", error);
+      console.log("📦 Using mock data as fallback");
+      
+      // Fallback to mock data
+      const mockFindings: SecurityFinding[] = [
+        {
+          id: "sec-1",
+          title: "RDS Instance Publicly Accessible",
+          severity: "Critical",
+          description: "Database instance can be accessed from the internet",
+          resource: "prod-db",
+          compliance: ["SOC 2", "ISO 27001", "GDPR"],
+          remediation: "Remove public access and configure VPC security groups",
+          status: "Open"
+        },
+        {
+          id: "sec-2",
+          title: "S3 Bucket Not Encrypted",
+          severity: "High",
+          description: "Sensitive data stored without encryption at rest",
+          resource: "backup-bucket",
+          compliance: ["SOC 2", "HIPAA"],
+          remediation: "Enable AES-256 server-side encryption",
+          estimatedCost: 12,
+          status: "Open"
+        },
+        {
+          id: "sec-3",
+          title: "Overly Permissive Security Group",
+          severity: "Medium",
+          description: "Security group allows inbound traffic from 0.0.0.0/0",
+          resource: "web-sg",
+          compliance: ["CIS Benchmark"],
+          remediation: "Restrict inbound rules to specific IP ranges",
+          status: "In Progress"
+        }
+      ];
+      setFindings(mockFindings);
+      
+      toast({
+        title: "Backend Unavailable",
+        description: "Using mock data. Start FastAPI server with: cd src/backend && python main.py",
+        variant: "destructive"
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleFixFinding = async (findingId: string) => {
+    try {
+      const response = await fetch("http://localhost:8000/security/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          finding_id: findingId,
+          updates: { status: "Fixed" }
+        })
+      });
+
+      if (response.ok) {
+        setFindings(prev => prev.map(finding => 
+          finding.id === findingId 
+            ? { ...finding, status: "Fixed" as const }
+            : finding
+        ));
+        
+        const finding = findings.find(f => f.id === findingId);
+        toast({
+          title: "Security Issue Fixed",
+          description: `${finding?.title} has been resolved successfully.`,
+        });
+      }
+    } catch (error) {
+      console.error("Failed to update finding:", error);
+      toast({
+        title: "Error",
+        description: "Failed to apply fix",
+        variant: "destructive"
+      });
+    }
   };
 
   const openFindings = findings.filter(f => f.status === 'Open').length;

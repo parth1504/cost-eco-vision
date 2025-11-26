@@ -1,8 +1,8 @@
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { TrendingUp, Trophy, DollarSign, Users, Star } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { mockLeaderboard } from "@/lib/mockData";
 
 const itemVariants = {
   hidden: { opacity: 0, y: 20 },
@@ -10,11 +10,41 @@ const itemVariants = {
 };
 
 export function CostSentinel() {
+  const [leaderboard, setLeaderboard] = useState<any[]>([]);
+  const [totalSavings, setTotalSavings] = useState(0);
+  const [loading, setLoading] = useState(true);
+  
   const forecastData = {
     thisMonth: 3245,
     nextMonth: 2890,
     savings: 355,
     confidence: 94
+  };
+
+  useEffect(() => {
+    fetchLeaderboardData();
+  }, []);
+
+  const fetchLeaderboardData = async () => {
+    try {
+      console.log("🔄 Fetching leaderboard data from backend...");
+      const response = await fetch("http://localhost:8000/leaderboard");
+      
+      if (!response.ok) {
+        throw new Error(`Backend returned ${response.status}`);
+      }
+      
+      const data = await response.json();
+      console.log("✅ Successfully fetched leaderboard data:", data);
+      setLeaderboard(data.leaderboard);
+      setTotalSavings(data.totalSavings);
+    } catch (error) {
+      console.error("❌ Failed to fetch leaderboard data:", error);
+      setLeaderboard([]);
+      setTotalSavings(0);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -70,8 +100,12 @@ export function CostSentinel() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4">
-              {mockLeaderboard.map((entry, index) => (
+            {loading ? (
+              <div className="text-center text-muted-foreground">Loading leaderboard...</div>
+            ) : (
+              <>
+                <div className="space-y-4">
+                  {leaderboard.map((entry, index) => (
                 <motion.div
                   key={entry.id}
                   initial={{ opacity: 0, x: -20 }}
@@ -113,16 +147,18 @@ export function CostSentinel() {
                       <Star className="h-3 w-3" />
                       <span>{entry.optimizations} optimizations</span>
                     </div>
-                  </div>
-                </motion.div>
-              ))}
-            </div>
-            
-            <div className="mt-4 p-3 bg-primary/5 border border-primary/20 rounded-lg text-center">
-              <p className="text-sm text-primary font-medium">
-                🎉 Collective team savings this month: $8,624
-              </p>
-            </div>
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+              
+              <div className="mt-4 p-3 bg-primary/5 border border-primary/20 rounded-lg text-center">
+                <p className="text-sm text-primary font-medium">
+                  🎉 Collective team savings this month: ${totalSavings.toLocaleString()}
+                </p>
+              </div>
+            </>
+            )}
           </CardContent>
         </Card>
       </motion.div>

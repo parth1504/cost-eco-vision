@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { AlertTriangle, CheckCircle, Clock, Filter, X } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -6,9 +6,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { mockAlerts, Alert } from "@/lib/mockData";
+import { Alert } from "@/lib/mockData";
 import { useToast } from "@/hooks/use-toast";
 import { IncidentCoordinator } from "@/components/advanced/IncidentCoordinator";
+// Removed Supabase import - now using FastAPI
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -26,29 +27,172 @@ const itemVariants = {
 };
 
 export function Alerts() {
-  const [alerts, setAlerts] = useState<Alert[]>(mockAlerts);
+  const [alerts, setAlerts] = useState<Alert[]>([]);
   const [selectedAlert, setSelectedAlert] = useState<Alert | null>(null);
   const [filter, setFilter] = useState<"All" | "Critical" | "Warning" | "Info">("All");
+  const [loading, setLoading] = useState(true);
   const { toast } = useToast();
+
+  // Fetch alerts from FastAPI backend
+  useEffect(() => {
+    const fetchAlerts = async () => {
+      try {
+        console.log("🔄 Attempting to fetch alerts from backend...");
+        setLoading(true);
+        
+        const response = await fetch('http://localhost:8000/alerts', {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+        
+        if (!response.ok) {
+          throw new Error(`Backend returned ${response.status}`);
+        }
+        
+        const data = await response.json();
+        console.log("✅ Successfully fetched alerts from backend:", data.length, "alerts");
+        
+        // Transform backend data to match frontend Alert interface
+        const transformedAlerts: Alert[] = data.map((alert: any) => ({
+          id: alert.id,
+          type: alert.source as Alert['type'],
+          severity: alert.severity,
+          title: alert.title,
+          description: alert.message,
+          suggestedAction: "Review and take appropriate action",
+          estimatedSavings: alert.affected_resources?.length > 0 ? 245 : undefined,
+          resourceId: alert.affected_resources?.[0] || "",
+          timestamp: alert.timestamp,
+          status: alert.status === "active" ? "Active" : alert.status === "resolved" ? "Resolved" : "In Progress"
+        }));
+        
+        setAlerts(transformedAlerts);
+      } catch (error) {
+        console.error('❌ Failed to fetch from backend:', error);
+        console.log('📦 Using mock data as fallback');
+        
+        // Fallback to mock data when backend is unavailable
+        const mockAlerts: Alert[] = [
+          {
+            id: "alert-1",
+            type: "Cost",
+            severity: "Critical",
+            title: "Idle EC2 Instance Running",
+            description: "EC2 instance i-0123456789 has been idle for 7 days",
+            suggestedAction: "Stop instance or resize to smaller type",
+            estimatedSavings: 245,
+            resourceId: "i-0123456789",
+            timestamp: "2024-01-15T10:30:00Z",
+            status: "Active"
+          },
+          {
+            id: "alert-2",
+            type: "Security",
+            severity: "Critical",
+            title: "RDS Instance Publicly Accessible",
+            description: "RDS instance prod-db is accessible from the internet",
+            suggestedAction: "Remove public access and configure VPC security groups",
+            resourceId: "prod-db",
+            timestamp: "2024-01-15T09:15:00Z",
+            status: "Active"
+          },
+          {
+            id: "alert-3",
+            type: "Performance",
+            severity: "Warning",
+            title: "High Memory Utilization",
+            description: "EC2 instance web-server-1 showing 85% memory usage",
+            suggestedAction: "Scale up instance or optimize application",
+            resourceId: "web-server-1",
+            timestamp: "2024-01-15T08:45:00Z",
+            status: "In Progress"
+          }
+        ];
+        setAlerts(mockAlerts);
+        
+        toast({
+          title: "Backend Unavailable",
+          description: "Using mock data. Start FastAPI server: cd src/backend && python main.py",
+          variant: "destructive"
+        });
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchAlerts();
+  }, [toast]);
 
   const filteredAlerts = alerts.filter(alert => 
     filter === "All" || alert.severity === filter
   );
 
-  const handleApplyFix = (alertId: string) => {
-    setAlerts(prev => prev.map(alert => 
-      alert.id === alertId 
-        ? { ...alert, status: "Resolved" as const }
-        : alert
-    ));
-    
-    const alert = alerts.find(a => a.id === alertId);
-    toast({
-      title: "Fix Applied Successfully",
-      description: `${alert?.title} has been resolved${alert?.estimatedSavings ? ` with $${alert.estimatedSavings}/month savings` : ''}`,
-    });
-    
-    setSelectedAlert(null);
+  const handleApplyFix = async (alertId: string) => {
+    try {
+      const alert = alerts.find(a => a.id === alertId);
+      
+      // Call FastAPI backend to update alert status
+      const response = await fetch(`http://localhost:8000/alerts/${alertId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ status: 'resolved' }),
+      });
+
+      if (!response.ok) throw new Error('Failed to update alert');
+
+      // Update local state
+      setAlerts(prev => prev.map(a => 
+        a.id === alertId 
+          ? { ...a, status: "Resolved" as const }
+          : a
+      ));
+      
+      toast({
+        title: "Fix Applied Successfully",
+        description: `${alert?.title} has been resolved${alert?.estimatedSavings ? ` with $${alert.estimatedSavings}/month savings` : ''}`,
+      });
+      
+      setSelectedAlert(null);
+    } catch (error) {
+      console.error('Error applying fix:', error);
+      toast({
+        title: "Error",
+        description: "Failed to apply fix",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const handleDismiss = async (alertId: string) => {
+    try {
+      // Call FastAPI backend to delete alert
+      const response = await fetch(`http://localhost:8000/alerts/${alertId}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) throw new Error('Failed to delete alert');
+
+      // Update local state
+      setAlerts(prev => prev.filter(a => a.id !== alertId));
+      
+      toast({
+        title: "Alert Dismissed",
+        description: "Alert has been removed",
+      });
+      
+      setSelectedAlert(null);
+    } catch (error) {
+      console.error('Error dismissing alert:', error);
+      toast({
+        title: "Error",
+        description: "Failed to dismiss alert",
+        variant: "destructive"
+      });
+    }
   };
 
   const getSeverityColor = (severity: Alert['severity']) => {
@@ -173,21 +317,30 @@ export function Alerts() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="overflow-x-auto">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Alert</th>
-                    <th>Type</th>
-                    <th>Severity</th>
-                    <th>Resource</th>
-                    <th>Status</th>
-                    <th>Potential Savings</th>
-                    <th>Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredAlerts.map((alert) => (
+            {loading ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="text-muted-foreground">Loading alerts...</div>
+              </div>
+            ) : filteredAlerts.length === 0 ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="text-muted-foreground">No alerts found</div>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Alert</th>
+                      <th>Type</th>
+                      <th>Severity</th>
+                      <th>Resource</th>
+                      <th>Status</th>
+                      <th>Potential Savings</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredAlerts.map((alert) => (
                     <motion.tr
                       key={alert.id}
                       variants={itemVariants}
@@ -206,7 +359,20 @@ export function Alerts() {
                         </div>
                       </td>
                       <td>
-                        <Badge variant="outline">{alert.type}</Badge>
+                        <div className="flex items-center space-x-2">
+                          <Badge variant="outline">{alert.type}</Badge>
+                          {alert.provider && (
+                            <Badge 
+                              className={`text-xs ${
+                                alert.provider === 'AWS' ? 'bg-yellow-500/10 text-yellow-700 dark:text-yellow-400 border-yellow-500/20' :
+                                alert.provider === 'GCP' ? 'bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-500/20' :
+                                'bg-purple-500/10 text-purple-700 dark:text-purple-400 border-purple-500/20'
+                              }`}
+                            >
+                              {alert.provider}
+                            </Badge>
+                          )}
+                        </div>
                       </td>
                       <td>
                         <Badge className={getSeverityColor(alert.severity)}>
@@ -247,10 +413,11 @@ export function Alerts() {
                         </Button>
                       </td>
                     </motion.tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </CardContent>
         </Card>
       </motion.div>
@@ -336,7 +503,11 @@ export function Alerts() {
                       >
                         Apply Fix
                       </Button>
-                      <Button variant="outline" className="flex-1">
+                      <Button 
+                        variant="outline" 
+                        className="flex-1"
+                        onClick={() => handleDismiss(selectedAlert.id)}
+                      >
                         Dismiss
                       </Button>
                     </>

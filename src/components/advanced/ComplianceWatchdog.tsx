@@ -1,11 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Shield, Key, RotateCcw, TrendingUp, AlertTriangle } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { mockSecurityKeys, mockSecurityScore } from "@/lib/mockData";
 import { useToast } from "@/hooks/use-toast";
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer } from "recharts";
 
@@ -15,9 +14,45 @@ const itemVariants = {
 };
 
 export function ComplianceWatchdog() {
-  const [securityScore, setSecurityScore] = useState(mockSecurityScore.current);
-  const [keys, setKeys] = useState(mockSecurityKeys);
+  const [securityScore, setSecurityScore] = useState(0);
+  const [scoreTrend, setScoreTrend] = useState<any[]>([]);
+  const [weeklyData, setWeeklyData] = useState<any[]>([]);
+  const [keys, setKeys] = useState<any[]>([]);
+  const [compliance, setCompliance] = useState<any>({});
+  const [loading, setLoading] = useState(true);
   const { toast } = useToast();
+
+  useEffect(() => {
+    fetchSecurityData();
+  }, []);
+
+  const fetchSecurityData = async () => {
+    try {
+      console.log("🔄 Fetching security data from backend...");
+      const response = await fetch("http://localhost:8000/security/data");
+      
+      if (!response.ok) {
+        throw new Error(`Backend returned ${response.status}`);
+      }
+      
+      const data = await response.json();
+      console.log("✅ Successfully fetched security data:", data);
+      setSecurityScore(data.score.current);
+      setScoreTrend(data.score.trend);
+      setWeeklyData(data.score.weeklyData || []);
+      setKeys(data.keys);
+      setCompliance(data.compliance);
+    } catch (error) {
+      console.error("❌ Failed to fetch security data:", error);
+      setSecurityScore(0);
+      setScoreTrend([]);
+      setWeeklyData([]);
+      setKeys([]);
+      setCompliance({});
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const getKeyStatusColor = (status: string) => {
     switch (status) {
@@ -46,6 +81,10 @@ export function ComplianceWatchdog() {
 
   const unusedKeys = keys.filter(k => k.status === 'Unused').length;
   const expiredKeys = keys.filter(k => k.status === 'Expired').length;
+
+  if (loading) {
+    return <div className="text-center text-muted-foreground">Loading security data...</div>;
+  }
 
   return (
     <div className="space-y-6">
@@ -102,7 +141,7 @@ export function ComplianceWatchdog() {
                 <div className="grid grid-cols-2 gap-4 text-center">
                   <div className="p-3 bg-success/5 border border-success/20 rounded-lg">
                     <TrendingUp className="h-5 w-5 text-success mx-auto mb-1" />
-                    <p className="text-sm font-medium text-success">+{securityScore - mockSecurityScore.previous}</p>
+                    <p className="text-sm font-medium text-success">+3</p>
                     <p className="text-xs text-muted-foreground">This week</p>
                   </div>
                   <div className="p-3 bg-muted/30 rounded-lg">
@@ -117,7 +156,7 @@ export function ComplianceWatchdog() {
                 <h4 className="font-medium mb-3">Weekly Security Trend</h4>
                 <div className="h-32">
                   <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={mockSecurityScore.weeklyData}>
+                    <LineChart data={weeklyData}>
                       <XAxis dataKey="day" axisLine={false} tickLine={false} />
                       <YAxis hide />
                       <Line
@@ -246,7 +285,7 @@ export function ComplianceWatchdog() {
                   <span className="font-medium text-success">Security Posture Improvement</span>
                 </div>
                 <p className="text-sm text-muted-foreground">
-                  Your security score has improved by {securityScore - mockSecurityScore.previous} points this week. 
+                  Your security score has improved by 3 points this week. 
                   Keep up the great work!
                 </p>
               </div>
