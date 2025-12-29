@@ -76,16 +76,10 @@ export function IncidentCoordinator() {
     setIncidentResolved(true);
     toast({
       title: "🎉 Incident Resolved!",
-      description: "Generating comic-strip postmortem summary...",
+      description: "Generating summary report.",
     });
     
-    // Auto-generate postmortem after a short delay
-    setTimeout(() => {
-      toast({
-        title: "📚 Postmortem Ready",
-        description: "Your comic-strip incident summary has been generated and shared with the team.",
-      });
-    }, 2000);
+
   };
 
   const completedTasks = checklist.filter(item => item.completed).length;
@@ -160,30 +154,35 @@ export function IncidentCoordinator() {
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
+
                 <div className="p-4 bg-primary/5 border border-primary/20 rounded-lg">
                   <h4 className="font-medium text-foreground mb-2">Primary Cause</h4>
                   <p className="text-sm text-muted-foreground">
-                    Database connection pool exhaustion due to inefficient query patterns 
-                    combined with high traffic load during peak hours.
+                    Public READ access granted to S3 bucket 'backup-storage-0189' due to misconfigured ACL.
                   </p>
                 </div>
-                
+
                 <div className="p-4 bg-warning/5 border border-warning/20 rounded-lg">
                   <h4 className="font-medium text-foreground mb-2">Contributing Factors</h4>
                   <ul className="text-sm text-muted-foreground space-y-1">
-                    <li>• Auto-scaling threshold set too high (80% CPU)</li>
-                    <li>• Missing connection pool monitoring</li>
-                    <li>• Inefficient database queries (N+1 problem)</li>
+                    <li>• Block Public Access was disabled</li>
+                    <li>• IAM Analyzer flagged unrestricted access</li>
+                    <li>• Anonymous 'AllUsers' READ permission present</li>
                   </ul>
                 </div>
 
                 <div className="p-4 bg-success/5 border border-success/20 rounded-lg">
                   <h4 className="font-medium text-foreground mb-2">Immediate Actions</h4>
                   <ul className="text-sm text-muted-foreground space-y-1">
-                    <li>✓ Scaled web servers from 2 to 4 instances</li>
-                    <li>✓ Increased database connection pool size</li>
-                    <li>✓ Applied query optimization patches</li>
+                    <li>✓ Removed public ACL entries</li>
+                    <li>✓ Enabled Block Public Access</li>
+                    <li>✓ Enabled SSE-S3 encryption</li>
+                    <li>✓ Verified resolution in IAM Analyzer</li>
                   </ul>
+                </div>
+
+                <div className="text-xs text-muted-foreground text-right">
+                  AI Confidence Score: <span className="font-semibold text-primary">97%</span>
                 </div>
               </div>
             </CardContent>
@@ -231,23 +230,36 @@ export function IncidentCoordinator() {
 
               <div className="mt-6">
                 {!incidentResolved ? (
-                  <Button
-                    onClick={handleResolveIncident}
-                    disabled={completedTasks < checklist.length}
-                    className="w-full action-success"
-                  >
-                    <CheckCircle className="h-4 w-4 mr-2" />
-                    Mark Incident as Resolved
-                  </Button>
-                ) : (
-                  <div className="text-center p-4 bg-success/5 border border-success/20 rounded-lg">
-                    <CheckCircle className="h-8 w-8 text-success mx-auto mb-2" />
-                    <p className="font-medium text-success">Incident Resolved</p>
-                    <p className="text-sm text-muted-foreground">
-                      🎨 Comic-strip postmortem generated and shared
-                    </p>
-                  </div>
-                )}
+              <Button
+                onClick={handleResolveIncident}
+                disabled={completedTasks < checklist.length}
+                className="w-full action-success"
+              >
+                <CheckCircle className="h-4 w-4 mr-2" />
+                Mark Incident as Resolved
+              </Button>
+            ) : (
+              <div className="space-y-4 text-center p-4 bg-success/5 border border-success/20 rounded-lg">
+                <div>
+                  <CheckCircle className="h-8 w-8 text-success mx-auto mb-2" />
+                  <p className="font-medium text-success">Incident Resolved</p>
+                  <p className="text-sm text-muted-foreground">
+                    Your post-incident report is ready.
+                  </p>
+                </div>
+
+                {/* Download Report Button */}
+                <Button
+                  onClick={() => window.open("http://localhost:8000/incident/report", "_blank")}
+                  className="w-full"
+                  variant="outline"
+                >
+                  <FileText className="h-4 w-4 mr-2" />
+                  Download Incident Report (PDF)
+                </Button>
+              </div>
+            )}
+
               </div>
             </CardContent>
           </Card>
@@ -265,10 +277,10 @@ export function IncidentCoordinator() {
             <CardHeader>
               <CardTitle className="flex items-center space-x-2">
                 <FileText className="h-5 w-5 text-primary" />
-                <span>Comic-Strip Postmortem</span>
+                <span>Report</span>
               </CardTitle>
               <CardDescription>
-                Auto-generated visual incident summary for team sharing
+                Auto-generated visual incident summary
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -278,7 +290,7 @@ export function IncidentCoordinator() {
                     <AlertTriangle className="h-8 w-8 text-critical" />
                   </div>
                   <p className="text-xs font-medium">1. Incident Start</p>
-                  <p className="text-xs text-muted-foreground">High CPU detected</p>
+                  <p className="text-xs text-muted-foreground">Public access detected</p>
                 </div>
                 
                 <div className="p-4 border-2 border-dashed border-primary/20 rounded-lg text-center">
@@ -286,7 +298,7 @@ export function IncidentCoordinator() {
                     <Activity className="h-8 w-8 text-warning" />
                   </div>
                   <p className="text-xs font-medium">2. Investigation</p>
-                  <p className="text-xs text-muted-foreground">Root cause found</p>
+                  <p className="text-xs text-muted-foreground">Public READ access granted to S3 bucket 'backup-storage-0189'</p>
                 </div>
                 
                 <div className="p-4 border-2 border-dashed border-primary/20 rounded-lg text-center">
@@ -294,7 +306,7 @@ export function IncidentCoordinator() {
                     <Clock className="h-8 w-8 text-primary" />
                   </div>
                   <p className="text-xs font-medium">3. Mitigation</p>
-                  <p className="text-xs text-muted-foreground">Auto-scaling applied</p>
+                  <p className="text-xs text-muted-foreground">Enabled Block Public Access</p>
                 </div>
                 
                 <div className="p-4 border-2 border-dashed border-success/20 rounded-lg text-center">
@@ -302,7 +314,7 @@ export function IncidentCoordinator() {
                     <CheckCircle className="h-8 w-8 text-success" />
                   </div>
                   <p className="text-xs font-medium">4. Resolution</p>
-                  <p className="text-xs text-muted-foreground">Service restored</p>
+                  <p className="text-xs text-muted-foreground">Verified resolution in IAM Analyzer</p>
                 </div>
               </div>
             </CardContent>

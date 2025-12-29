@@ -26,6 +26,11 @@ const itemVariants = {
   visible: { opacity: 1, x: 0 }
 };
 
+const formatCommand = (cmd: string) => {
+  // small normalization (optional)
+  return cmd.trim();
+};
+
 export function Alerts() {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [selectedAlert, setSelectedAlert] = useState<Alert | null>(null);
@@ -53,6 +58,7 @@ export function Alerts() {
         
         const data = await response.json();
         console.log("✅ Successfully fetched alerts from backend:", data.length, "alerts");
+        console.log(data);
         
         // Transform backend data to match frontend Alert interface
         const transformedAlerts: Alert[] = data.map((alert: any) => ({
@@ -62,59 +68,20 @@ export function Alerts() {
           title: alert.title,
           description: alert.message,
           suggestedAction: "Review and take appropriate action",
-          estimatedSavings: alert.affected_resources?.length > 0 ? 245 : undefined,
+          estimatedSavings: alert.saving,
           resourceId: alert.affected_resources?.[0] || "",
           timestamp: alert.timestamp,
-          status: alert.status === "active" ? "Active" : alert.status === "resolved" ? "Resolved" : "In Progress"
+          status: alert.status === "active" ? "Active" : alert.status === "resolved" ? "Resolved" : "In Progress",
+          solution_steps: alert.solution_steps || []
         }));
         
         setAlerts(transformedAlerts);
       } catch (error) {
         console.error('❌ Failed to fetch from backend:', error);
-        console.log('📦 Using mock data as fallback');
-        
-        // Fallback to mock data when backend is unavailable
-        const mockAlerts: Alert[] = [
-          {
-            id: "alert-1",
-            type: "Cost",
-            severity: "Critical",
-            title: "Idle EC2 Instance Running",
-            description: "EC2 instance i-0123456789 has been idle for 7 days",
-            suggestedAction: "Stop instance or resize to smaller type",
-            estimatedSavings: 245,
-            resourceId: "i-0123456789",
-            timestamp: "2024-01-15T10:30:00Z",
-            status: "Active"
-          },
-          {
-            id: "alert-2",
-            type: "Security",
-            severity: "Critical",
-            title: "RDS Instance Publicly Accessible",
-            description: "RDS instance prod-db is accessible from the internet",
-            suggestedAction: "Remove public access and configure VPC security groups",
-            resourceId: "prod-db",
-            timestamp: "2024-01-15T09:15:00Z",
-            status: "Active"
-          },
-          {
-            id: "alert-3",
-            type: "Performance",
-            severity: "Warning",
-            title: "High Memory Utilization",
-            description: "EC2 instance web-server-1 showing 85% memory usage",
-            suggestedAction: "Scale up instance or optimize application",
-            resourceId: "web-server-1",
-            timestamp: "2024-01-15T08:45:00Z",
-            status: "In Progress"
-          }
-        ];
-        setAlerts(mockAlerts);
         
         toast({
           title: "Backend Unavailable",
-          description: "Using mock data. Start FastAPI server: cd src/backend && python main.py",
+          description: "Restart server to fetch live alerts",
           variant: "destructive"
         });
       } finally {
@@ -129,43 +96,57 @@ export function Alerts() {
     filter === "All" || alert.severity === filter
   );
 
-  const handleApplyFix = async (alertId: string) => {
-    try {
-      const alert = alerts.find(a => a.id === alertId);
-      
-      // Call FastAPI backend to update alert status
-      const response = await fetch(`http://localhost:8000/alerts/${alertId}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ status: 'resolved' }),
+const handleApplyFix = async (alertId: string) => {
+  try {
+    const alert = alerts.find(a => a.id === alertId);
+
+    if (!alert) {
+      toast({
+        title: "Alert Not Found",
+        description: "Could not locate alert in state.",
+        variant: "destructive",
       });
+      return;
+    }
 
-      if (!response.ok) throw new Error('Failed to update alert');
+    // Send update request to backend
+    const response = await fetch(`http://localhost:8000/alerts/${alertId}`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        status: "resolved", // <-- lowercase for backend logic
+      }),
+    });
 
-      // Update local state
-      setAlerts(prev => prev.map(a => 
-        a.id === alertId 
+    if (!response.ok) throw new Error("Failed to update alert in backend");
+
+    // Update local React state
+    setAlerts(prev =>
+      prev.map(a =>
+        a.id === alertId
           ? { ...a, status: "Resolved" as const }
           : a
-      ));
-      
-      toast({
-        title: "Fix Applied Successfully",
-        description: `${alert?.title} has been resolved${alert?.estimatedSavings ? ` with $${alert.estimatedSavings}/month savings` : ''}`,
-      });
-      
-      setSelectedAlert(null);
-    } catch (error) {
-      console.error('Error applying fix:', error);
-      toast({
-        title: "Error",
-        description: "Failed to apply fix",
-        variant: "destructive"
-      });
-    }
-  };
+      )
+    );
+
+    toast({
+      title: "Fix Applied",
+      description: `${alert.title} has been resolved.`,
+    });
+
+    setSelectedAlert(null);
+  } catch (error) {
+    console.error("Error applying fix:", error);
+    toast({
+      title: "Error",
+      description: "Failed to apply fix.",
+      variant: "destructive",
+    });
+  }
+};
+
 
   const handleDismiss = async (alertId: string) => {
     try {
@@ -385,20 +366,23 @@ export function Alerts() {
                         </code>
                       </td>
                       <td>
-                        <div className="flex items-center space-x-2">
+                        <div className="flex items-center  space-x-2">
                           {getStatusIcon(alert.status)}
                           <span className="text-sm">{alert.status}</span>
                         </div>
                       </td>
-                      <td>
-                        {alert.estimatedSavings ? (
+                     <td>
+                        {alert.estimatedSavings && alert.estimatedSavings !== "N/A" ? (
                           <span className="font-medium text-success">
                             ${alert.estimatedSavings}/mo
                           </span>
                         ) : (
-                          <span className="text-muted-foreground">Security Fix</span>
+                          <span className="text-muted-foreground">
+                            {alert.estimatedSavings === "N/A" ? "N/A" : "Security Fix"}
+                          </span>
                         )}
                       </td>
+
                       <td>
                         <Button
                           size="sm"
@@ -424,7 +408,7 @@ export function Alerts() {
 
       {/* Alert Detail Sheet */}
       <Sheet open={!!selectedAlert} onOpenChange={(open) => !open && setSelectedAlert(null)}>
-        <SheetContent className="w-[500px]">
+        <SheetContent className="w-[750px] max-w-[750px] overflow-y-auto">
           {selectedAlert && (
             <>
               <SheetHeader>
@@ -489,7 +473,48 @@ export function Alerts() {
                     <CardTitle className="text-base">AI Recommendation</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <p className="text-sm text-foreground">{selectedAlert.suggestedAction}</p>
+                    {/* <p className="text-sm text-foreground">{selectedAlert.description}</p> */}
+                    <div className="mt-3">
+                    <p className="text-xs font-medium text-foreground mb-2">Solution Steps</p>
+
+                      {selectedAlert.solution_steps && selectedAlert.solution_steps.length > 0 ? (
+                        <div className="space-y-2">
+                          {selectedAlert.solution_steps.map((step) => (
+                            <div
+                              key={step.step}
+                              className="p-3 bg-surface rounded-md border border-border/30"
+                              role="region"
+                              aria-label={`Step ${step.step} - ${step.description}`}
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[11px] font-semibold text-primary">
+                                      Step {step.step}
+                                    </span>
+                                    <span className="text-sm font-medium text-foreground">{step.description}</span>
+                                  </div>
+
+                                
+                                </div>
+
+                              
+                              </div>
+
+                              {/* command block */}
+                              <code
+                                className="block text-xs bg-muted px-3 py-2 rounded mt-2 font-mono text-muted-foreground overflow-auto"
+                                style={{ whiteSpace: "pre-wrap" }}
+                              >
+                                {formatCommand(step.command)}
+                              </code>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">No automated steps available.</p>
+                      )}
+                    </div>
                   </CardContent>
                 </Card>
 

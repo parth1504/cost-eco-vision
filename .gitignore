@@ -22,3 +22,15 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+src/backend/.env
+
+.vscode/
+.idea/
+
+# Python virtual environments
+venv/
+.env/
+__pycache__/
+*.pyc
+*.pyo

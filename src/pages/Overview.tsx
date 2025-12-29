@@ -16,9 +16,7 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { mockSavingsData, mockActivities, mockRecommendations, type Activity, type Recommendation, type Alert } from "@/lib/mockData";
-import { useToast } from "@/hooks/use-toast";
+import { mockSavingsData, type Activity, type Recommendation } from "@/lib/mockData";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 
 interface SavingsData {
@@ -46,8 +44,8 @@ const itemVariants = {
 
 export function Overview() {
   const [savingsData, setSavingsData] = useState<SavingsData>(mockSavingsData);
-  const [recommendations, setRecommendations] = useState<Recommendation[]>(mockRecommendations);
-  const [activities, setActivities] = useState<Activity[]>(mockActivities);
+  const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
+  const [activities, setActivities] = useState<Activity[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedAlert, setSelectedAlert] = useState<Alert | null>(null);
   const { toast: showToast } = useToast();
@@ -194,7 +192,7 @@ export function Overview() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-success">
-              {isLoading ? "..." : formatCurrency(savingsData.monthly)}
+              {isLoading ? "..." : formatCurrency(activities.reduce((sum, activity) => sum + activity.savings, 0))}
             </div>
             <div className="flex items-center space-x-2 text-xs text-muted-foreground">
               <TrendingUp className="h-3 w-3 text-success" />
@@ -211,7 +209,7 @@ export function Overview() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-primary">
-              {isLoading ? "..." : formatCurrency(savingsData.yearly)}
+              {isLoading ? "..." : formatCurrency(activities.reduce((sum, activity) => sum + activity.savings, 0) * 12)}
             </div>
             <div className="flex items-center space-x-2 text-xs text-muted-foreground">
               <span>Projected annual savings</span>
@@ -227,7 +225,7 @@ export function Overview() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-eco">
-              {isLoading ? "..." : `${savingsData.co2Reduced} tons`}
+              {isLoading ? "..." : `${Math.round(savingsData.co2Reduced * activities.length)} kgs`}
             </div>
             <div className="flex items-center space-x-2 text-xs text-muted-foreground">
               <TrendingUp className="h-3 w-3 text-eco" />
@@ -244,7 +242,7 @@ export function Overview() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-foreground">
-              {isLoading ? "..." : savingsData.totalOptimizations}
+              {isLoading ? "..." : activities.length}
             </div>
             <div className="flex items-center space-x-2 text-xs text-muted-foreground">
               <CheckCircle className="h-3 w-3 text-success" />
@@ -366,7 +364,7 @@ export function Overview() {
                     <th>Recommendation</th>
                     <th>Estimated Savings</th>
                     <th>Impact</th>
-                    <th>Action</th>
+                    {/* <th>Action</th> */}
                   </tr>
                 </thead>
                 <tbody>
@@ -400,15 +398,11 @@ export function Overview() {
                           {rec.impact}
                         </Badge>
                       </td>
-                      <td>
-                        <Button 
-                          size="sm" 
-                          className="action-success"
-                          onClick={() => handleApplyFixClick(rec)}
-                        >
+                      {/* <td>
+                        <Button size="sm" className="action-success">
                           Apply Fix
                         </Button>
-                      </td>
+                      </td> */}
                     </tr>
                   ))}
                 </tbody>

@@ -50,7 +50,7 @@ export function Header({ sidebarCollapsed }: HeaderProps) {
                 <User className="h-4 w-4 text-primary-foreground" />
               </div>
               <div className="hidden md:block text-left">
-                <p className="text-sm font-medium">John Doe</p>
+                <p className="text-sm font-medium">Pranali Shinde</p>
                 <p className="text-xs text-muted-foreground">Admin</p>
               </div>
               <ChevronDown className="h-4 w-4 text-muted-foreground" />

@@ -4,33 +4,33 @@ mock_leaderboard_entries = [
     {
         "id": "team-1",
         "team": "Platform Team",
-        "user": "Sarah Chen",
-        "savings": 2847,
-        "optimizations": 12,
+        "user": "Pranali Shinde",
+        "savings": 28,
+        "optimizations": 3,
         "rank": 1
     },
     {
         "id": "team-2",
-        "team": "Data Engineering",
-        "user": "Marcus Johnson",
-        "savings": 2156,
-        "optimizations": 8,
+        "team": "Devops",
+        "user": "Parth Shah",
+        "savings": 21,
+        "optimizations": 2,
         "rank": 2
     },
     {
         "id": "team-3",
-        "team": "Mobile Team",
-        "user": "Elena Rodriguez",
-        "savings": 1943,
-        "optimizations": 15,
+        "team": "SRE",
+        "user": "Vedant Kadam",
+        "savings": 19,
+        "optimizations": 2,
         "rank": 3
     },
     {
         "id": "team-4",
-        "team": "Web Frontend",
-        "user": "David Kim",
-        "savings": 1678,
-        "optimizations": 6,
+        "team": "Integrations",
+        "user": "Aarav Joshi",
+        "savings": 6,
+        "optimizations": 1,
         "rank": 4
     }
 ]

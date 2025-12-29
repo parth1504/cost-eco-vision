@@ -1,56 +1,135 @@
 from datetime import datetime
 from typing import List, Dict, Any
+from resources import get_all_resources   # <-- Your existing resources API
+from dynamo import save_resource_in_db, get_resource_from_db
+from decimal import Decimal
+from fastapi import HTTPException
+from aws_executor import apply_aws_commands
 
-mock_alerts: List[Dict[str, Any]] = [
-    {
-        "id": "alert-1",
-        "title": "EC2 Instance Running Idle",
-        "message": "Instance i-0123456789abcdef has been running with <5% CPU for 7 days",
-        "severity": "Warning",
-        "source": "Cost",
-        "affected_resources": ["i-0123456789abcdef"],
-        "status": "active",
-        "timestamp": "2025-01-15T10:30:00Z",
-    },
-    {
-        "id": "alert-2",
-        "title": "S3 Bucket Publicly Accessible",
-        "message": "Bucket prod-data-storage has public read access enabled",
-        "severity": "Critical",
-        "source": "Security",
-        "affected_resources": ["prod-data-storage"],
-        "status": "active",
-        "timestamp": "2025-01-15T09:15:00Z",
-    },
-    {
-        "id": "alert-3",
-        "title": "RDS Database Underutilized",
-        "message": "Database prod-mysql-01 running at 15% capacity",
-        "severity": "Warning",
-        "source": "Cost",
-        "affected_resources": ["prod-mysql-01"],
-        "status": "active",
-        "timestamp": "2025-01-15T08:45:00Z",
-    },
-]
 
-def get_all_alerts():
-    return mock_alerts
 
-def get_alert_by_id(alert_id: str):
-    return next((alert for alert in mock_alerts if alert["id"] == alert_id), None)
+def decimal_to_float(obj):
+    """Convert DynamoDB Decimal types → float safely."""
+    if isinstance(obj, Decimal):
+        return float(obj)
+    if isinstance(obj, dict):
+        return {k: decimal_to_float(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [decimal_to_float(v) for v in obj]
+    return obj
 
-def update_alert(alert_id: str, updates: Dict[str, Any]):
-    for alert in mock_alerts:
-        if alert["id"] == alert_id:
-            alert.update(updates)
-            return alert
-    return None
+async def generate_alerts_from_resources() -> List[Dict[str, Any]]:
+    """Generate alerts dynamically based on each resource's recommendations."""
+    alerts = []
+    
+    resources = await get_all_resources()   # fetch EC2 + S3 + Dynamo + others
+    print(f"Generating alerts from {len(resources)} resources")
+    for resource in resources:
+        resource_id = resource.get("resource_id")
+        recs = resource.get("recommendations", [])
 
-def delete_alert(alert_id: str):
-    global mock_alerts
-    alert = get_alert_by_id(alert_id)
-    if alert:
-        mock_alerts = [a for a in mock_alerts if a["id"] != alert_id]
-        return alert
-    return None
+        for rec in recs:
+            alert = {
+                "id": f"{resource_id}:{rec.get('title').replace(' ', '~')}",
+                "title": rec.get("title"),
+                "message": rec.get("issue"),               # one-line issue
+                "severity": rec.get("severity").capitalize(),
+                "source": rec.get("type").capitalize(),    # cost / security / performance
+                "affected_resources": [resource_id],
+                "status": rec.get("status").lower(),
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "impact": rec.get("impact", "medium"),
+                "saving": rec.get("saving", "N/A"),
+                "resource_type": resource.get("type"),
+                "region": resource.get("region"),
+                "solution_steps": rec.get("solution_steps")
+            }
+
+            alerts.append(alert)
+    return alerts
+
+async def get_all_alerts() -> List[Dict[str, Any]]:
+    """Return dynamically computed alerts (no mock data).""" 
+    return await generate_alerts_from_resources()
+
+
+async def get_alert_by_id(alert_id: str):
+    """Fetch a single alert from dynamic generation."""
+    alerts = await generate_alerts_from_resources()
+    return next((a for a in alerts if a["id"] == alert_id), None)
+
+
+async def update_alert(alert_id: str, new_status: str):
+    """
+    Update alert status by mapping it to the correct resource + recommendation.
+    alert_id format: <resource_id>-<title-with-dashes> (title may use -- for spaces)
+    """
+
+    # 1) parse alert id
+    try:
+        resource_id, rec_slug = alert_id.split(":", 1)
+        # recover title: replace '--' with space, also replace other separators if needed
+        rec_title_raw = rec_slug.replace("--", " ").replace("~", " ").replace("%E2%80%94", " ").strip()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid alert ID format")
+
+    # 2) find resource (try resource types or a generic lookup)
+    resource_types = ["EC2", "S3", "DynamoDB", "RDS", "Lambda"]
+    resource = None
+    resource_type_found = None
+
+    for r_type in resource_types:
+        r = get_resource_from_db(resource_id, r_type)
+        if r:
+            resource = r
+            resource_type_found = r_type
+            break
+
+    if not resource:
+        raise HTTPException(status_code=404, detail="Resource not found for this alert")
+    # 3) find recommendation and index
+    rec_list = resource.get("recommendations", [])
+    target_index = None
+    for i, rec in enumerate(rec_list):
+        if rec.get("title", "").strip().lower() == rec_title_raw.strip().lower():
+            target_index = i
+            break
+    if target_index is None:
+        # helpful debug message
+        raise HTTPException(status_code=404, detail=f"Recommendation titled '{rec_title_raw}' not found in resource {resource_id}")
+
+    # =============================
+    # 4) Execute AWS commands
+    # =============================
+    boto3_commands = rec.get("boto3_sequence", [])
+
+
+    execution_results = await apply_aws_commands(boto3_commands)
+
+    # =============================
+    # 5) Update recommendation status
+    # =============================
+    updated_rec = { **rec }
+    updated_rec["status"] = new_status.lower()
+    updated_rec["last_activity"] = datetime.utcnow().isoformat() + "Z"
+
+    resource["recommendations"][target_index] = updated_rec
+
+    save_resource_in_db(
+        resource_id=resource_id,
+        resource_type=resource_type_found,
+        resource_data=resource,
+    )
+    return decimal_to_float(resource)
+
+
+async def delete_alert(alert_id: str):
+    """
+    Alerts are recreated each time, so delete is virtual.
+    If needed, implement a suppression list stored in DynamoDB.
+    """
+    return {
+        "id": alert_id,
+        "status": "suppressed",
+        "message": "Alert suppressed until next refresh cycle."
+    }

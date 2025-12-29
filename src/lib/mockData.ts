@@ -7,30 +7,59 @@ export interface Alert {
   title: string;
   description: string;
   suggestedAction: string;
-  estimatedSavings?: number;
+  estimatedSavings?: number | "N/A";
   resourceId: string;
   timestamp: string;
   status: "Active" | "Resolved" | "In Progress";
   provider?: "AWS" | "GCP" | "Azure";
+  solution_steps?: Array<{
+    step: number;
+    description: string;
+    command: string;
+  }>;
 }
 
 export interface Resource {
   id: string;
   name: string;
-  type: "EC2" | "RDS" | "S3" | "Lambda" | "ELB";
-  status: "Running" | "Idle" | "Stopped" | "Optimized";
+  type: "EC2" | "RDS" | "S3" | "Lambda" | "ELB" | "DynamoDB";
+  status: "Running" | "Idle" | "Stopped" | "optimized";
   utilization: number;
   monthly_cost: number;
   region: string;
-  recommendations: string[];
-  lastActivity: string;
   provider?: "AWS" | "GCP" | "Azure";
+  lastActivity: string;
+
+
+  // NEW: Rich Recommendation Object
+  recommendations: Array<{
+    title: string;
+    description: string;
+    type: "cost" | "security" | "performance" | "compliance";
+    severity: "critical" | "warning" | "info" | "resolved" | "in-progress";
+    saving: number | "N/A";
+    issue: string;
+    impact: "high" | "medium" | "low";
+    solution_steps: Array<{
+      step: number;
+      description: string;
+      command: string;
+    }>;
+    boto3Commands?: Array<{
+      service: string;
+  operation: string;
+  params: Record<string, any>;
+    }>;
+  }>;
+
+  // NEW: Commands the agent will run (flattened list)
   commands?: Array<{
     step: number;
     title: string;
     command: string;
   }>;
 }
+
 
 export interface Recommendation {
   id: string;
@@ -60,198 +89,18 @@ export interface SecurityFinding {
   description: string;
   resource: string;
   compliance: string[];
-  remediation: string;
+  remediation: {
+    title: string;
+    steps: {
+      step: number;
+      description: string;
+      command: string;
+    }[]
+  };
   estimatedCost?: number;
   status: "Open" | "Fixed" | "In Progress";
 }
 
-// Mock data
-export const mockAlerts: Alert[] = [
-  {
-    id: "alert-1",
-    type: "Cost",
-    severity: "Critical",
-    title: "Idle EC2 Instance Running",
-    description: "EC2 instance i-0123456789 has been idle for 7 days",
-    suggestedAction: "Stop instance or resize to smaller type",
-    estimatedSavings: 245,
-    resourceId: "i-0123456789",
-    timestamp: "2024-01-15T10:30:00Z",
-    status: "Active"
-  },
-  {
-    id: "alert-2",
-    type: "Security",
-    severity: "Critical",
-    title: "RDS Instance Publicly Accessible",
-    description: "RDS instance prod-db is accessible from the internet",
-    suggestedAction: "Remove public access and configure VPC security groups",
-    resourceId: "prod-db",
-    timestamp: "2024-01-15T09:15:00Z",
-    status: "Active"
-  },
-  {
-    id: "alert-3",
-    type: "Performance",
-    severity: "Warning",
-    title: "High Memory Utilization",
-    description: "EC2 instance web-server-1 showing 85% memory usage",
-    suggestedAction: "Scale up instance or optimize application",
-    resourceId: "web-server-1",
-    timestamp: "2024-01-15T08:45:00Z",
-    status: "In Progress"
-  }
-];
-
-export const mockResources: Resource[] = [
-  {
-    id: "i-0123456789",
-    name: "web-server-1",
-    type: "EC2",
-    status: "Running",
-    utilization: 15,
-    monthly_cost: 89.50,
-    region: "us-east-1",
-    recommendations: ["Right-size to t3.small", "Enable detailed monitoring"],
-    lastActivity: "2024-01-15T12:00:00Z"
-  },
-  {
-    id: "prod-db",
-    name: "Production Database",
-    type: "RDS",
-    status: "Running",
-    utilization: 67,
-    monthly_cost: 234.00,
-    region: "us-east-1",
-    recommendations: ["Remove public access", "Enable encryption"],
-    lastActivity: "2024-01-15T11:30:00Z"
-  },
-  {
-    id: "backup-bucket",
-    name: "Backup Storage",
-    type: "S3",
-    status: "Optimized",
-    utilization: 0,
-    monthly_cost: 45.20,
-    region: "us-east-1",
-    recommendations: ["Archive old data to Glacier"],
-    lastActivity: "2024-01-14T20:15:00Z"
-  }
-];
-
-export const mockRecommendations: Recommendation[] = [
-  {
-    id: "rec-1",
-    resource: "web-server-1 (i-0123456789)",
-    resourceType: "EC2",
-    issue: "Low CPU utilization (15%)",
-    recommendation: "Right-size from t3.medium to t3.small",
-    estimatedSavings: 245,
-    impact: "High",
-    category: "Cost",
-    status: "Pending"
-  },
-  {
-    id: "rec-2",
-    resource: "prod-db",
-    resourceType: "RDS",
-    issue: "Publicly accessible database",
-    recommendation: "Remove public access and use VPC endpoints",
-    estimatedSavings: 0,
-    impact: "High",
-    category: "Security",
-    status: "Pending"
-  },
-  {
-    id: "rec-3",
-    resource: "backup-bucket",
-    resourceType: "S3",
-    issue: "Old data in Standard storage",
-    recommendation: "Move data older than 90 days to Glacier",
-    estimatedSavings: 156,
-    impact: "Medium",
-    category: "Cost",
-    status: "Pending"
-  }
-];
-
-export const mockActivities: Activity[] = [
-  {
-    id: "act-1",
-    action: "EC2 instance i-abc123 stopped",
-    resource: "web-server-2",
-    savings: 42,
-    timestamp: "2024-01-15T14:30:00Z",
-    type: "Cost"
-  },
-  {
-    id: "act-2",
-    action: "Security group updated",
-    resource: "prod-db",
-    savings: 0,
-    timestamp: "2024-01-15T13:15:00Z",
-    type: "Security"
-  },
-  {
-    id: "act-3",
-    action: "S3 lifecycle policy applied",
-    resource: "backup-bucket",
-    savings: 89,
-    timestamp: "2024-01-15T12:00:00Z",
-    type: "Cost"
-  }
-];
-
-export const mockSecurityFindings: SecurityFinding[] = [
-  {
-    id: "sec-1",
-    title: "RDS Instance Publicly Accessible",
-    severity: "Critical",
-    description: "Database instance can be accessed from the internet",
-    resource: "prod-db",
-    compliance: ["SOC 2", "ISO 27001", "GDPR"],
-    remediation: "Remove public access and configure VPC security groups",
-    status: "Open"
-  },
-  {
-    id: "sec-2",
-    title: "S3 Bucket Not Encrypted",
-    severity: "High",
-    description: "Sensitive data stored without encryption at rest",
-    resource: "backup-bucket",
-    compliance: ["SOC 2", "HIPAA"],
-    remediation: "Enable AES-256 server-side encryption",
-    estimatedCost: 12,
-    status: "Open"
-  },
-  {
-    id: "sec-3",
-    title: "Overly Permissive Security Group",
-    severity: "Medium",
-    description: "Security group allows inbound traffic from 0.0.0.0/0",
-    resource: "web-sg",
-    compliance: ["CIS Benchmark"],
-    remediation: "Restrict inbound rules to specific IP ranges",
-    status: "In Progress"
-  }
-];
-
-export const mockSavingsData = {
-  monthly: 1234,
-  yearly: 14808,
-  co2Reduced: 2.4,
-  totalOptimizations: 23,
-  chartData: [
-    { month: "Jul", savings: 800 },
-    { month: "Aug", savings: 950 },
-    { month: "Sep", savings: 1100 },
-    { month: "Oct", savings: 1050 },
-    { month: "Nov", savings: 1300 },
-    { month: "Dec", savings: 1234 }
-  ]
-};
-
-// New advanced AI-agent features data
 export interface LeaderboardEntry {
   id: string;
   team: string;
@@ -272,16 +121,6 @@ export interface DriftDetection {
   lastSync: string;
 }
 
-export interface CapacityForecast {
-  resource: string;
-  metric: "CPU" | "Memory" | "Storage" | "Network";
-  current: number;
-  predicted: number;
-  timeframe: string;
-  confidence: number;
-  status: "Normal" | "Warning" | "Critical";
-}
-
 export interface IncidentEvent {
   id: string;
   timestamp: string;
@@ -300,177 +139,28 @@ export interface SecurityKey {
   status: "Active" | "Unused" | "Expired";
 }
 
-export const mockLeaderboard: LeaderboardEntry[] = [
-  {
-    id: "team-1",
-    team: "Platform Team",
-    user: "Sarah Chen",
-    savings: 2847,
-    optimizations: 12,
-    rank: 1
-  },
-  {
-    id: "team-2", 
-    team: "Data Engineering",
-    user: "Marcus Johnson",
-    savings: 2156,
-    optimizations: 8,
-    rank: 2
-  },
-  {
-    id: "team-3",
-    team: "Mobile Team",
-    user: "Elena Rodriguez",
-    savings: 1943,
-    optimizations: 15,
-    rank: 3
-  },
-  {
-    id: "team-4",
-    team: "Web Frontend",
-    user: "David Kim",
-    savings: 1678,
-    optimizations: 6,
-    rank: 4
-  }
-];
 
-export const mockDriftDetections: DriftDetection[] = [
-  {
-    id: "drift-1",
-    resource: "prod-web-server",
-    resourceType: "EC2",
-    driftType: "Configuration",
-    severity: "High",
-    actualValue: "t3.large",
-    expectedValue: "t3.medium",
-    lastSync: "2024-01-14T10:30:00Z"
-  },
-  {
-    id: "drift-2",
-    resource: "database-security-group",
-    resourceType: "Security Group",
-    driftType: "Security",
-    severity: "Critical",
-    actualValue: "0.0.0.0/0:3306",
-    expectedValue: "10.0.0.0/8:3306",
-    lastSync: "2024-01-15T08:15:00Z"
-  },
-  {
-    id: "drift-3",
-    resource: "backup-bucket-policy",
-    resourceType: "S3",
-    driftType: "Compliance",
-    severity: "Medium",
-    actualValue: "Public Read",
-    expectedValue: "Private",
-    lastSync: "2024-01-15T12:00:00Z"
-  }
-];
 
-export const mockCapacityForecasts: CapacityForecast[] = [
-  {
-    resource: "web-cluster",
-    metric: "CPU",
-    current: 67,
-    predicted: 89,
-    timeframe: "Next 4 hours",
-    confidence: 92,
-    status: "Warning"
-  },
-  {
-    resource: "database-main",
-    metric: "Memory",
-    current: 78,
-    predicted: 95,
-    timeframe: "Next 2 hours", 
-    confidence: 88,
-    status: "Critical"
-  },
-  {
-    resource: "cache-cluster",
-    metric: "CPU",
-    current: 45,
-    predicted: 52,
-    timeframe: "Next 6 hours",
-    confidence: 85,
-    status: "Normal"
-  }
-];
 
-export const mockIncidentTimeline: IncidentEvent[] = [
-  {
-    id: "event-1",
-    timestamp: "2024-01-15T14:32:15Z",
-    type: "Alert",
-    source: "CloudWatch",
-    message: "High CPU utilization detected on web-server-1",
-    severity: "Warning"
-  },
-  {
-    id: "event-2",
-    timestamp: "2024-01-15T14:33:02Z", 
-    type: "Metric",
-    source: "Prometheus",
-    message: "CPU usage spiked to 89% on web-server-1",
-    severity: "Critical"
-  },
-  {
-    id: "event-3",
-    timestamp: "2024-01-15T14:34:18Z",
-    type: "Log",
-    source: "Application",
-    message: "Database connection pool exhausted",
-    severity: "Critical"
-  },
-  {
-    id: "event-4",
-    timestamp: "2024-01-15T14:35:45Z",
-    type: "Action",
-    source: "AI Agent",
-    message: "Auto-scaling triggered: Added 2 instances",
-    severity: "Info"
-  }
-];
 
-export const mockSecurityKeys: SecurityKey[] = [
-  {
-    id: "key-1",
-    name: "legacy-api-key",
-    type: "API Key",
-    lastUsed: "2023-08-15T10:30:00Z",
-    expiresIn: 30,
-    status: "Unused"
-  },
-  {
-    id: "key-2",
-    name: "old-service-account",
-    type: "Service Account",
-    lastUsed: "2023-12-01T15:22:00Z",
-    expiresIn: -15,
-    status: "Expired"
-  },
-  {
-    id: "key-3",
-    name: "backup-ssh-key",
-    type: "SSH Key",
-    lastUsed: "2024-01-10T09:15:00Z",
-    expiresIn: 90,
-    status: "Unused"
-  }
-];
 
-export const mockSecurityScore = {
-  current: 87,
-  previous: 72,
-  trend: "up",
-  weeklyData: [
-    { day: "Mon", score: 72 },
-    { day: "Tue", score: 74 },
-    { day: "Wed", score: 78 },
-    { day: "Thu", score: 81 },
-    { day: "Fri", score: 85 },
-    { day: "Sat", score: 86 },
-    { day: "Sun", score: 87 }
+export const mockSavingsData = {
+  monthly: 1234,
+  yearly: 14808,
+  co2Reduced: 2.4,
+  totalOptimizations: 23,
+  chartData: [
+    { month: "Jul", savings: 25 },
+    { month: "Aug", savings: 24 },
+    { month: "Sep", savings: 31 },
+    { month: "Oct", savings: 30 },
+    { month: "Nov", savings: 22 }
   ]
 };
+
+
+
+
+
+
+

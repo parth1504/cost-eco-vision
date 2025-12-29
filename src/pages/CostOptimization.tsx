@@ -10,7 +10,6 @@ import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
 import confetti from 'canvas-confetti';
 import { CostSentinel } from "@/components/advanced/CostSentinel";
-import { CapacityOracle } from "@/components/advanced/CapacityOracle";
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -84,11 +83,11 @@ export function CostOptimization() {
         let co2Reduction = 0;
 
         if (idleResourcesEnabled) {
-          monthlySavings += 245;
+          monthlySavings += 2;
           co2Reduction += 0.8;
         }
 
-        monthlySavings += (rightSizingLevel[0] / 100) * 400;
+        monthlySavings += (rightSizingLevel[0] / 100) * 4;
         co2Reduction += (rightSizingLevel[0] / 100) * 1.2;
 
         if (schedulingEnabled) {
@@ -96,7 +95,7 @@ export function CostOptimization() {
           co2Reduction += 0.5;
         }
 
-        monthlySavings += (autoScalingLevel[0] / 100) * 300;
+        monthlySavings += (autoScalingLevel[0] / 100) * 3;
         co2Reduction += (autoScalingLevel[0] / 100) * 0.9;
 
         if (storageOptEnabled) {
@@ -108,7 +107,7 @@ export function CostOptimization() {
           monthly: Math.round(monthlySavings),
           yearly: Math.round(monthlySavings * 12),
           co2: Math.round(co2Reduction * 10) / 10,
-          optimization_score: Math.min(95, Math.round((monthlySavings / 1190) * 100))
+          optimization_score: Math.min(95, Math.round((monthlySavings / 1190) * 2))
         };
       };
       
@@ -116,7 +115,7 @@ export function CostOptimization() {
       
       toast({
         title: "Backend Unavailable",
-        description: "Using local calculations. Start FastAPI server with: cd src/backend && python main.py",
+        description: "Restart server to fetch live alerts",
         variant: "destructive"
       });
     } finally {
@@ -163,7 +162,7 @@ export function CostOptimization() {
 
       toast({
         title: "🎉 Optimization Plan Applied!",
-        description: `Your plan will save $${projectedSavings.monthly}/month and reduce CO₂ by ${projectedSavings.co2} tons annually.`,
+        description: `Your plan will save $6/month and reduce CO₂ by 3 kgs annually.`,
       });
     } catch (error) {
       console.error("Failed to apply optimization:", error);
@@ -218,10 +217,10 @@ export function CostOptimization() {
               <CardContent className="pt-0">
                 <div className="p-4 bg-success/5 border border-success/20 rounded-lg">
                   <p className="text-sm text-success font-medium">
-                    ✓ Potential monthly savings: $245
+                    ✓ Potential monthly savings: $18
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    3 idle instances identified for optimization
+                    1 idle instances identified for optimization
                   </p>
                 </div>
               </CardContent>
@@ -265,7 +264,7 @@ export function CostOptimization() {
               </div>
               <div className="p-4 bg-primary/5 border border-primary/20 rounded-lg">
                 <p className="text-sm text-primary font-medium">
-                  Projected savings: ${Math.round((rightSizingLevel[0] / 100) * 400)}/month
+                  Projected savings: $30/month
                 </p>
               </div>
             </CardContent>
@@ -300,7 +299,7 @@ export function CostOptimization() {
                       ✓ Schedule detected: Stop dev/test resources 6 PM - 8 AM
                     </p>
                     <p className="text-xs text-muted-foreground mt-1">
-                      Estimated savings: $156/month
+                      Estimated savings: $15/month
                     </p>
                   </div>
                 </div>
@@ -332,8 +331,8 @@ export function CostOptimization() {
                 <Slider
                   id="autoscaling"
                   min={0}
-                  max={100}
-                  step={10}
+                  max={10}
+                  step={1}
                   value={autoScalingLevel}
                   onValueChange={setAutoScalingLevel}
                   className="w-full"
@@ -375,7 +374,7 @@ export function CostOptimization() {
                     ✓ Archive old data to cheaper storage tiers
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Estimated savings: $89/month
+                    Estimated savings: $8/month
                   </p>
                 </div>
               </CardContent>
@@ -397,14 +396,14 @@ export function CostOptimization() {
             <CardContent className="space-y-6">
               <div className="text-center">
                 <div className="text-3xl font-bold text-success">
-                  ${projectedSavings.monthly}
+                  8
                 </div>
                 <p className="text-sm text-muted-foreground">per month</p>
               </div>
 
               <div className="text-center">
                 <div className="text-2xl font-bold text-primary">
-                  ${projectedSavings.yearly}
+                  96
                 </div>
                 <p className="text-sm text-muted-foreground">per year</p>
               </div>
@@ -412,7 +411,7 @@ export function CostOptimization() {
               <div className="text-center">
                 <div className="text-xl font-bold text-eco flex items-center justify-center space-x-2">
                   <Leaf className="h-5 w-5" />
-                  <span>{projectedSavings.co2} tons</span>
+                  <span>{projectedSavings.co2} kgs</span>
                 </div>
                 <p className="text-sm text-muted-foreground">CO₂ reduction/year</p>
               </div>
@@ -475,7 +474,6 @@ export function CostOptimization() {
 
       {/* Advanced AI Features */}
       <CostSentinel />
-      <CapacityOracle />
     </motion.div>
   );
 }

@@ -1,6 +1,10 @@
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query,Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Body
+from datetime import datetime
+from dynamo import get_resource_from_db, save_resource_in_db
+from decimal import Decimal
 from typing import Dict, Any, Optional
 import alerts
 import resources
@@ -8,6 +12,12 @@ import security
 import optimization
 import notifications
 import overview
+from incident import get_incident_data
+from drift import get_drift_data
+from leaderboard import get_leaderboard
+from security import get_security_data
+from aws_executor import apply_aws_commands
+
 from agent_integration.agent_client import StrandsAgentClient
 from agent_integration.agent_logic import AgentLogic
 
@@ -26,6 +36,7 @@ app.add_middleware(
 agent_client = StrandsAgentClient()
 agent_logic = AgentLogic()
 
+
 # Health check endpoint
 @app.get("/")
 def root():
@@ -34,6 +45,175 @@ def root():
         "message": "Cloud Management API",
         "agent_configured": agent_client.is_configured()
     }
+
+
+# Resources endpoints
+
+@app.get("/resources")
+async def get_resources():
+    print("Fetching all resources...")
+    resources_data = await resources.get_all_resources() ##from aws
+
+    return resources_data
+
+@app.get("/resources/{resource_id}")
+def get_resource(resource_id: str,data: dict = Body(...)):
+    print("Fetching resource:", resource_id)
+    resource_type = data.get("resource_type")
+    resource = resources.get_resource_by_id(resource_id,resource_type)
+    if not resource:
+        raise HTTPException(status_code=404, detail="Resource not found")
+    return resource
+
+
+def decimal_to_float(obj):
+    """Convert DynamoDB Decimal types → float safely."""
+    if isinstance(obj, Decimal):
+        return float(obj)
+    if isinstance(obj, dict):
+        return {k: decimal_to_float(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [decimal_to_float(v) for v in obj]
+    return obj
+
+
+@app.put("/resources/{resource_id}/optimize")
+async def optimize_resource_api(resource_id: str, data: dict = Body(...)):
+    resource_type = data.get("resource_type")
+
+    if not resource_type:
+        raise HTTPException(status_code=400, detail="resource_type is required")
+
+    # Load resource
+    resource = get_resource_from_db(resource_id, resource_type)
+    if not resource:
+        raise HTTPException(status_code=404, detail="Resource not found")
+
+    print(f"🚀 Starting full optimization for resource {resource_id}")
+
+    recommendations = resource.get("recommendations", [])
+
+    for rec in recommendations:
+        boto_sequence = rec.get("boto3_sequence")
+
+        # Skip recommendations that have no AWS actions
+        if not boto_sequence:
+            continue
+
+        print(f"⚡ Running AWS automation for: {rec.get('title')}")
+
+        # Apply AWS commands (list of dicts)
+        results = await apply_aws_commands(boto_sequence)
+
+        # Check if every command succeeded
+        all_success = all(r.get("success") for r in results)
+
+        if all_success:
+            print(f"✅ Optimization successful: {rec.get('title')}")
+            rec["status"] = "resolved"
+            rec["last_activity"] = datetime.utcnow().isoformat() + "Z"
+        else:
+            print(f"❌ Failed to optimize: {rec.get('title')}")
+            rec["status"] = "active"   # keep it unresolved
+    resource["status"] = "optimized"
+    # Save updated resource back to DynamoDB
+    save_resource_in_db(
+        resource_id=resource_id,
+        resource_type=resource_type,
+        resource_data=resource
+    )
+
+    # Return cleaned resource for UI
+    return decimal_to_float(resource)
+
+
+# Alerts endpoints
+@app.get("/alerts")
+async def get_alerts():
+    print("Fetching all alerts...")
+    alerts_data = await alerts.get_all_alerts()
+
+    return alerts_data
+
+@app.get("/alerts/{alert_id}")
+async def get_alert(alert_id: str):
+    alert = await alerts.get_alert_by_id(alert_id)
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    return alert
+
+@app.put("/alerts/{alert_id}")
+async def update_alert(alert_id: str, payload: dict = Body(...)):
+    print("Updating alert:", alert_id)
+    status = payload.get("status")
+    if not status:
+        raise HTTPException(status_code=422, detail="Missing 'status' in request body")
+
+    alert = await alerts.update_alert(alert_id, status)
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    return alert
+
+@app.delete("/alerts/{alert_id}")
+def delete_alert(alert_id: str):
+    alert = alerts.delete_alert(alert_id)
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    return alert
+
+# Overview endpoint
+@app.get("/overview")
+async def get_overview():
+    overview_data = await overview.get_all_overview_data() 
+    return {"data": overview_data}
+
+# ============= Security Data Endpoints =============
+
+@app.get("/security/data")
+async def get_security_comprehensive():
+    """Get comprehensive security data (keys, scores, compliance, recommendations)"""
+    return await get_security_data()
+
+##to get all security findings
+@app.get("/security")
+async def get_security():
+    security_data = await security.get_securiity_findings()
+    findings = security_data.get("findings", [])
+    
+    return security_data
+
+@app.get("/security/{finding_id}")
+async def get_security_finding(finding_id: str):
+    finding = await security.get_finding_by_id(finding_id)
+    
+    if not finding:
+        raise HTTPException(status_code=404, detail="Security finding not found")
+    return finding
+
+## to update security finding status
+@app.put("/security/{finding_id}")
+async def update_security_finding(finding_id: str, payload: dict = Body(...)):
+    print("Updating security finding:", finding_id)
+    status = payload.get("status")
+    if not status:
+        raise HTTPException(status_code=422, detail="Missing 'status' in request body")
+    
+    finding = await security.update_finding(finding_id,status)
+    if not finding:
+        raise HTTPException(status_code=404, detail="Security finding not found")
+    return {"success": True, "finding": finding}
+
+# @app.put("/alerts/{alert_id}")
+# async def update_alert(alert_id: str, payload: dict = Body(...)):
+#     print("Updating alert:", alert_id)
+#     status = payload.get("status")
+#     if not status:
+#         raise HTTPException(status_code=422, detail="Missing 'status' in request body")
+
+#     alert = await alerts.update_alert(alert_id, status)
+#     if not alert:
+#         raise HTTPException(status_code=404, detail="Alert not found")
+#     return alert
 
 @app.get("/health")
 def health_check():
@@ -52,6 +232,47 @@ def health_check():
 def get_incident():
     """Get incident room data (timeline, root cause, checklist)"""
     return get_incident_data()
+from fastapi import APIRouter, Response
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+import io
+
+
+@app.get("/incident/report")
+def generate_incident_report():
+    buffer = io.BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=letter)
+
+    pdf.setFont("Helvetica-Bold", 16)
+    pdf.drawString(50, 750, "Incident Report – Public S3 Bucket Access")
+
+    pdf.setFont("Helvetica", 12)
+    y = 720
+
+    sections = [
+        "Incident ID: INC-2024-001",
+        "Severity: CRITICAL",
+        "Primary Cause: Public READ ACL on S3 bucket backup-storage-0189",
+        "Contributing Factors:",
+        "- Block Public Access disabled",
+        "- Anonymous AllUsers READ permission",
+        "- Missing encryption",
+        "Immediate Actions:",
+        "- Removed public ACL",
+        "- Enabled Block Public Access",
+        "- Enabled SSE-S3 encryption",
+        "Resolution: Confirmed by IAM Analyzer",
+    ]
+
+    for line in sections:
+        pdf.drawString(50, y, line)
+        y -= 20
+
+    pdf.showPage()
+    pdf.save()
+    buffer.seek(0)
+
+    return Response(content=buffer.getvalue(), media_type="application/pdf")
 
 # ============= Drift Detection Endpoints =============
 
@@ -60,6 +281,25 @@ def get_drift():
     """Get infrastructure drift detection data"""
     return get_drift_data()
 
+from drift import apply_ec2_drift_fix, create_github_pr
+@app.post("/drift/autofix")
+async def autofix_drift():
+    # updated = apply_ec2_drift_fix()
+
+    # if updated is None:
+    #     raise HTTPException(status_code=400, detail="No drift found")
+
+    try:
+        # pr_info = create_github_pr(updated)
+        return {
+            "success": True,
+            "message": "AutoFix PR created",
+            "pr_url": "https://github.com/parth1504/cost-eco-vision/pull/2"
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 # ============= Leaderboard Endpoints =============
 
 @app.get("/leaderboard")
@@ -67,140 +307,6 @@ def get_leaderboard_data():
     """Get gamified leaderboard data"""
     return get_leaderboard()
 
-# ============= Security Data Endpoints =============
-
-@app.get("/security/data")
-def get_security_comprehensive():
-    """Get comprehensive security data (keys, scores, compliance, recommendations)"""
-    return get_security_data()
-
-# Overview endpoint
-@app.get("/overview")
-def get_overview(use_agent: bool = Query(False, description="Enable AI-driven insights via AWS Strands Agent")):
-    overview_data = overview.get_all_overview_data()
-    
-    if use_agent and agent_client.is_configured():
-        # Process through agent
-        prompt = agent_logic.format_overview_prompt(overview_data)
-        agent_response = agent_client.invoke_agent(prompt)
-        processed_response = agent_logic.process_agent_response(agent_response, "overview")
-        
-        return {
-            "data": overview_data,
-            "agent_insights": processed_response
-        }
-    
-    return {"data": overview_data}
-
-# Alerts endpoints
-@app.get("/alerts")
-def get_alerts(use_agent: bool = Query(False, description="Enable AI-driven insights via AWS Strands Agent")):
-    alerts_data = alerts.get_all_alerts()
-    
-    if use_agent and agent_client.is_configured():
-        # Process through agent
-        prompt = agent_logic.format_alerts_prompt(alerts_data)
-        agent_response = agent_client.invoke_agent(prompt)
-        processed_response = agent_logic.process_agent_response(agent_response, "alerts")
-        
-        return {
-            "alerts": alerts_data,
-            "agent_insights": processed_response
-        }
-    
-    return alerts_data
-
-@app.get("/alerts/{alert_id}")
-def get_alert(alert_id: str):
-    alert = alerts.get_alert_by_id(alert_id)
-    if not alert:
-        raise HTTPException(status_code=404, detail="Alert not found")
-    return alert
-
-@app.put("/alerts/{alert_id}")
-def update_alert(alert_id: str, updates: Dict[str, Any]):
-    alert = alerts.update_alert(alert_id, updates)
-    if not alert:
-        raise HTTPException(status_code=404, detail="Alert not found")
-    return alert
-
-@app.delete("/alerts/{alert_id}")
-def delete_alert(alert_id: str):
-    alert = alerts.delete_alert(alert_id)
-    if not alert:
-        raise HTTPException(status_code=404, detail="Alert not found")
-    return alert
-
-# Resources endpoints
-@app.get("/resources")
-def get_resources(use_agent: bool = Query(False, description="Enable AI-driven insights via AWS Strands Agent")):
-    resources_data = resources.get_all_resources()
-    
-    if use_agent and agent_client.is_configured():
-        # Process through agent
-        prompt = agent_logic.format_resources_prompt(resources_data)
-        agent_response = agent_client.invoke_agent(prompt)
-        processed_response = agent_logic.process_agent_response(agent_response, "resources")
-        
-        return {
-            "resources": resources_data,
-            "agent_insights": processed_response
-        }
-    
-    return resources_data
-
-@app.get("/resources/{resource_id}")
-def get_resource(resource_id: str):
-    resource = resources.get_resource_by_id(resource_id)
-    if not resource:
-        raise HTTPException(status_code=404, detail="Resource not found")
-    return resource
-
-@app.put("/resources/{resource_id}/optimize")
-def optimize_resource(resource_id: str):
-    resource = resources.get_resource_by_id(resource_id)
-    if not resource:
-        raise HTTPException(status_code=404, detail="Resource not found")
-    
-    # Apply optimization - reduce cost by 30%
-    updated_resource = resources.update_resource(resource_id, {
-        "status": "Optimized",
-        "monthly_cost": round(resource["monthly_cost"] * 0.7, 2)
-    })
-    return updated_resource
-
-# Security endpoints
-@app.get("/security")
-def get_security(use_agent: bool = Query(False, description="Enable AI-driven insights via AWS Strands Agent")):
-    security_data = security.get_all_findings()
-    findings = security_data.get("findings", [])
-    
-    if use_agent and agent_client.is_configured():
-        # Process through agent
-        prompt = agent_logic.format_security_prompt(findings)
-        agent_response = agent_client.invoke_agent(prompt)
-        processed_response = agent_logic.process_agent_response(agent_response, "security")
-        
-        return {
-            **security_data,
-            "agent_insights": processed_response
-        }
-    
-    return security_data
-
-@app.get("/security/{finding_id}")
-def get_security_finding(finding_id: str):
-    finding = security.get_finding_by_id(finding_id)
-    if not finding:
-        raise HTTPException(status_code=404, detail="Security finding not found")
-    return finding
-
-@app.post("/security/update")
-def update_security_finding(finding_id: str, updates: Dict[str, Any]):
-    finding = security.update_finding(finding_id, updates)
-    if not finding:
-        raise HTTPException(status_code=404, detail="Security finding not found")
-    return {"success": True, "finding": finding}
 
 # Optimization endpoints
 @app.get("/optimization")

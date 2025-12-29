@@ -3,110 +3,81 @@
 mock_incident_timeline = [
     {
         "id": "event-1",
-        "timestamp": "2024-01-15T14:30:00Z",
+        "timestamp": "2024-01-15T09:13:00Z",
         "type": "Alert",
-        "source": "CloudWatch",
-        "message": "High CPU utilization detected on web-server-1",
-        "severity": "Warning"
+        "source": "AWS S3",
+        "message": "Public access detected: Bucket 'backup-storage-0189' allows READ permissions to AllUsers.",
+        "severity": "Critical"
     },
     {
         "id": "event-2",
-        "timestamp": "2024-01-15T14:32:15Z",
-        "type": "Metric",
-        "source": "DataDog",
-        "message": "Response time increased to 2.4s (normal: 0.8s)",
-        "severity": "Warning"
+        "timestamp": "2024-01-15T09:14:00Z",
+        "type": "PolicyAnalysis",
+        "source": "IAM Analyzer",
+        "message": "Bucket policy review confirmed anonymous READ access via ACL and missing Block Public Access settings.",
+        "severity": "High"
     },
     {
         "id": "event-3",
-        "timestamp": "2024-01-15T14:35:00Z",
-        "type": "Alert",
-        "source": "PagerDuty",
-        "message": "Service degradation reported by monitoring",
+        "timestamp": "2024-01-15T09:15:00Z",
+        "type": "Escalation",
+        "source": "Unified Efficiency Agent",
+        "message": "Exposure risk escalated to CRITICAL. Immediate remediation recommended: Block Public Access, remove 'AllUsers' ACL, enable encryption.",
         "severity": "Critical"
-    },
-    {
-        "id": "event-4",
-        "timestamp": "2024-01-15T14:36:30Z",
-        "type": "Action",
-        "source": "AWS Console",
-        "message": "Auto-scaling triggered, launching 2 additional instances",
-        "severity": "Info"
-    },
-    {
-        "id": "event-5",
-        "timestamp": "2024-01-15T14:40:00Z",
-        "type": "Log",
-        "source": "Application Logs",
-        "message": "Memory leak detected in background worker process",
-        "severity": "Critical"
-    },
-    {
-        "id": "event-6",
-        "timestamp": "2024-01-15T14:42:00Z",
-        "type": "Action",
-        "source": "Manual Intervention",
-        "message": "Restarted background worker service",
-        "severity": "Info"
-    },
-    {
-        "id": "event-7",
-        "timestamp": "2024-01-15T14:45:00Z",
-        "type": "Metric",
-        "source": "CloudWatch",
-        "message": "CPU utilization normalized to 45%",
-        "severity": "Info"
     }
 ]
 
+
 mock_root_cause_analysis = {
-    "primaryCause": "Memory leak in background worker process causing resource exhaustion",
+    "primaryCause": "Misconfigured access control policy leading to unintended resource exposure",
     "contributingFactors": [
-        "Inefficient database query in batch processing job",
-        "Missing connection pool limits",
-        "Inadequate monitoring alerts for memory usage"
+        "Lack of automated configuration checks",
+        "Missing preventive guardrail policies",
+        "Insufficient visibility into recent configuration changes"
     ],
     "immediateActions": [
-        "Restart affected services",
-        "Apply hotfix for memory management",
-        "Increase monitoring frequency",
-        "Review and optimize database queries"
+        "Revoke unintended access permissions",
+        "Apply corrective configuration updates",
+        "Enable stricter policy enforcement",
+        "Trigger organization-wide configuration audit"
     ],
-    "confidence": 94
+    "confidence": 92
 }
+
 
 mock_mitigation_checklist = [
     {
         "id": "1",
-        "task": "Identify root cause",
+        "task": "Validate incident details and confirm severity",
         "completed": False
     },
     {
         "id": "2",
-        "task": "Scale affected resources",
-        "completed": True
+        "task": "Identify impacted resources and users",
+        "completed": False
     },
     {
         "id": "3",
-        "task": "Update monitoring thresholds",
+        "task": "Apply containment actions to prevent further impact",
         "completed": False
     },
     {
         "id": "4",
-        "task": "Notify stakeholders",
-        "completed": True
+        "task": "Review and update relevant security or access policies",
+        "completed": False
     },
     {
         "id": "5",
-        "task": "Document incident details",
+        "task": "Notify key stakeholders and incident response team",
         "completed": False
     },
     {
         "id": "6",
-        "task": "Schedule post-incident review",
+        "task": "Document root cause, analysis, and remediation steps",
         "completed": False
     }
 ]
+
 
 def get_incident_data():
     """Return all incident room data"""
