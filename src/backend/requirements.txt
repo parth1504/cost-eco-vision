@@ -6,3 +6,5 @@ boto3>=1.34.0
 botocore>=1.34.0
 boto3
 dotenv
+PyGithub==1.58
+reportlab==4.0.0

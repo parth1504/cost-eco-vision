@@ -18,6 +18,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { mockSavingsData, type Activity, type Recommendation } from "@/lib/mockData";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import { useToast } from "@/hooks/use-toast";
+import { Alert } from "@/lib/mockData";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
+
 
 interface SavingsData {
   monthly: number;
@@ -69,7 +73,8 @@ export function Overview() {
       } catch (error) {
         console.error("❌ Failed to fetch overview data from backend:", error);
         console.log("⚠️ Falling back to local mock data");
-        toast.error("Backend server not available", {
+        showToast({
+          title: "Backend server not available",
           description: "Using local data. Start the FastAPI server to see live data.",
         });
         // Keep using the initial mock data as fallback
