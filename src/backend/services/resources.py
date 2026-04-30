@@ -1,7 +1,7 @@
 from typing import List, Dict, Any
-from dynamo import get_resource_from_db
-from aws import list_ec2_instances, list_s3_buckets, list_dynamodb_tables
-from gcp import list_cloud_storage
+from backend.connections.db import get_resource_from_db
+from backend.connections.aws import list_ec2_instances, list_s3_buckets, list_dynamodb_tables
+from backend.connections.gcp import list_cloud_storage
 
 
 running_resources=0

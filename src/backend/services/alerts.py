@@ -1,10 +1,10 @@
 from datetime import datetime
 from typing import List, Dict, Any
-from resources import get_all_resources   # <-- Your existing resources API
-from dynamo import save_resource_in_db, get_resource_from_db
+from backend.services.resources import get_all_resources   # <-- Your existing resources API
+from backend.connections.db import save_resource_in_db, get_resource_from_db
 from decimal import Decimal
 from fastapi import HTTPException
-from aws_executor import apply_aws_commands
+from backend.aws.util import apply_aws_commands
 
 
 
@@ -17,6 +17,7 @@ def decimal_to_float(obj):
     if isinstance(obj, list):
         return [decimal_to_float(v) for v in obj]
     return obj
+
 
 async def generate_alerts_from_resources() -> List[Dict[str, Any]]:
     """Generate alerts dynamically based on each resource's recommendations."""
@@ -47,6 +48,7 @@ async def generate_alerts_from_resources() -> List[Dict[str, Any]]:
 
             alerts.append(alert)
     return alerts
+
 
 async def get_all_alerts() -> List[Dict[str, Any]]:
     """Return dynamically computed alerts (no mock data).""" 

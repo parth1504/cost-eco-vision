@@ -3,7 +3,7 @@ Overview data for the ITOps dashboard
 """
 from typing import List, Dict, Any
 import random
-from alerts import get_all_alerts
+from backend.services.alerts import get_all_alerts
 # Mock overview data structure
 mock_savings_data = {
     "monthly": 1234,

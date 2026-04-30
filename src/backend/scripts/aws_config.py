@@ -1,10 +1,11 @@
 import boto3
 
-AWS_REGION = "eu-north-1"
+from backend.connections.aws import get_client, get_region
+AWS_REGION = get_region()
 
-ec2 = boto3.client("ec2", region_name=AWS_REGION)
-s3 = boto3.client("s3", region_name=AWS_REGION)
-dynamodb = boto3.client("dynamodb", region_name=AWS_REGION)
+ec2 = get_client("ec2")
+s3 = get_client("s3")
+dynamodb = get_client("dynamodb")
 
 # -------------------------------------------------------
 # REAL IaC — this is the file PR will modify during autofix

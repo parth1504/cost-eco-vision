@@ -1,18 +1,13 @@
-import os
-import boto3
+
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from decimal import Decimal
+
+from backend.connections.aws import get_client
 load_dotenv()
 
 # --- DynamoDB Setup ---
-dynamodb = boto3.resource(
-    "dynamodb",
-    region_name=os.getenv("AWS_REGION"),
-    aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
-    aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
-)
-
+dynamodb = get_client("dynamodb")    
 # DynamoDB table reference
 recommendations_table = dynamodb.Table("Recommendations")
 
@@ -47,7 +42,6 @@ def save_resource_in_db(resource_id, resource_type, resource_data):
     recommendations_table.put_item(Item=item)
 
     return item
-
 
 
 # --- Get a recommendation for resource ---

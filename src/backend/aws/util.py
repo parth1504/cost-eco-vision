@@ -1,3 +1,6 @@
+
+from backend.connections.aws import get_client
+
 import boto3
 from botocore.exceptions import ClientError
 
@@ -20,6 +23,27 @@ CLI_TO_BOTO_MAPPINGS = {
 }
 
 
+
+cloudwatch = get_client("cloudwatch")
+
+def replace_placeholders(obj, mapping):
+    """
+    Recursively replace placeholders like {INSTANCE_ID} in strings,
+    lists, and nested dictionaries.
+    """
+    if isinstance(obj, str):
+        for key, value in mapping.items():
+            obj = obj.replace(f"{{{key}}}", value)
+        return obj
+
+    elif isinstance(obj, list):
+        return [replace_placeholders(item, mapping) for item in obj]
+
+    elif isinstance(obj, dict):
+        return {k: replace_placeholders(v, mapping) for k, v in obj.items()}
+
+    else:
+        return obj
 
 async def apply_aws_commands(commands: list):
     """
@@ -82,3 +106,37 @@ async def apply_aws_commands(commands: list):
             })
 
     return results
+
+
+def get_resource_cost(tag_key, tag_value):
+    """
+    Universal AWS Cost function for EC2, S3, DynamoDB...
+    Uses AWS Cost Explorer with tag-based filtering.
+    """
+    from datetime import datetime, timedelta
+
+    end_date = datetime.utcnow().date()
+    start_date = end_date - timedelta(days=30)
+
+    try:
+        response = cloudwatch.get_cost_and_usage(
+            TimePeriod={"Start": start_date.isoformat(), "End": end_date.isoformat()},
+            Granularity="MONTHLY",
+            Metrics=["UnblendedCost"],
+            Filter={
+                "Tags": {
+                    "Key": tag_key,
+                    "Values": [tag_value]
+                }
+            }
+        )
+
+        results = response.get("ResultsByTime", [])
+        if results and results[0]["Total"]:
+            return float(results[0]["Total"]["UnblendedCost"]["Amount"])
+
+    except Exception as e:
+        print(f"Cost lookup failed for {tag_key}:{tag_value} → {e}")
+
+    return 0.0
+
