@@ -1,5 +1,5 @@
 
-from backend.connections.aws import get_client
+from connections.aws import get_client
 
 import boto3
 from botocore.exceptions import ClientError

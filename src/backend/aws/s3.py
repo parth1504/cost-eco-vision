@@ -1,7 +1,7 @@
-from backend.connections.aws import get_client, get_region
-from backend.connections.db import get_resource_from_db, save_resource_in_db
-from backend.connections.db import get_resource_from_db, save_resource_in_db
-from backend.aws.util import replace_placeholders, get_resource_cost
+from connections.aws import get_client, get_region
+from connections.db import get_resource_from_db, save_resource_in_db
+from connections.db import get_resource_from_db, save_resource_in_db
+from aws.util import replace_placeholders, get_resource_cost
 
 from datetime import datetime, timedelta
 aws_region = get_region()

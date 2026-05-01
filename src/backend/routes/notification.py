@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 from typing import Dict, Any, Optional
-import backend.services.notifications as notifications
+import services.notifications as notifications
 
 from pydantic import BaseModel
 class NotificationSettings(BaseModel):

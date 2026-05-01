@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from backend.services.leaderboard import get_leaderboard
+from services.leaderboard import get_leaderboard
 
 router = APIRouter(prefix="/leaderboard", tags=["leaderboard"])
 

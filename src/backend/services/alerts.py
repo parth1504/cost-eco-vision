@@ -1,10 +1,10 @@
 from datetime import datetime
 from typing import List, Dict, Any
-from backend.services.resources import get_all_resources   # <-- Your existing resources API
-from backend.connections.db import save_resource_in_db, get_resource_from_db
+from services.resources import get_all_resources   # <-- Your existing resources API
+from connections.db import save_resource_in_db, get_resource_from_db
 from decimal import Decimal
 from fastapi import HTTPException
-from backend.aws.util import apply_aws_commands
+from aws.util import apply_aws_commands
 
 
 

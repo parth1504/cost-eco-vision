@@ -1,6 +1,6 @@
-from backend.connections.aws import get_client
-from backend.services.recommendations import get_resource_from_db, save_resource_in_db
-from backend.aws.util import replace_placeholders, get_resource_cost
+from connections.aws import get_client
+from connections.db import get_resource_from_db, save_resource_in_db
+from aws.util import replace_placeholders, get_resource_cost
 
 from datetime import datetime, timedelta
 ec2 = get_client("ec2")

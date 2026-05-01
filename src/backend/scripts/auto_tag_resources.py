@@ -7,7 +7,7 @@ Tags:
 """
 
 from botocore.exceptions import ClientError
-from backend.connections.aws import get_client, get_region
+from connections.aws import get_client, get_region
 
 # Initialize clients
 AWS_REGION = get_region()

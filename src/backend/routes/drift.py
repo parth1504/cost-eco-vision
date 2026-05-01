@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException
-from backend.services.drift import get_drift_data
+from services.drift import get_drift_data
 
 router = APIRouter(prefix="/drift", tags=["drift"])
 

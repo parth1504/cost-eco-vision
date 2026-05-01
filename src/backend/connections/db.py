@@ -1,13 +1,15 @@
 
 from datetime import datetime, timedelta
+import boto3
+import boto3
 from dotenv import load_dotenv
 from decimal import Decimal
 
-from backend.connections.aws import get_client
+from connections.aws import get_client
 load_dotenv()
 
 # --- DynamoDB Setup ---
-dynamodb = get_client("dynamodb")    
+dynamodb =  boto3.resource("dynamodb")
 # DynamoDB table reference
 recommendations_table = dynamodb.Table("Recommendations")
 

@@ -2,9 +2,10 @@ from fastapi import APIRouter, Body, HTTPException
 from typing import Dict, Any
 from decimal import Decimal
 from datetime import datetime
-import resources
-from backend.connections.db import get_resource_from_db, save_resource_in_db
-from backend.connections import apply_aws_commands
+from . import resources
+from connections.db import get_resource_from_db, save_resource_in_db
+from aws.util import apply_aws_commands
+from services.resources import get_all_resources
 
 
 router = APIRouter(prefix="/resources", tags=["resources"])
@@ -13,7 +14,7 @@ router = APIRouter(prefix="/resources", tags=["resources"])
 @router.get("")
 async def get_resources():
     print("Fetching all resources...")
-    resources_data = await resources.get_all_resources()  # from AWS
+    resources_data = await get_all_resources()  # from AWS
     return resources_data
 
 

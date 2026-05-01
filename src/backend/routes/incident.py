@@ -2,6 +2,7 @@ from fastapi import APIRouter, Response
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 import io
+from services.incident import get_incident_data
 
 router = APIRouter(prefix="/incident", tags=["incident"])
 

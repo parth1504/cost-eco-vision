@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Body, HTTPException
-import security
-from security import get_security_data
+from . import security
+from services.security import get_security_data
 router = APIRouter(prefix="/security", tags=["security"])
 
 

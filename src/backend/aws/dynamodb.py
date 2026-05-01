@@ -1,7 +1,7 @@
-from backend.connections.db import get_resource_from_db, save_resource_in_db
+from connections.db import get_resource_from_db, save_resource_in_db
 from datetime import datetime, timedelta
-from backend.aws.util import replace_placeholders, get_resource_cost
-from backend.connections.aws import get_client
+from aws.util import replace_placeholders, get_resource_cost
+from connections.aws import get_client
 
 dynamodb = get_client("dynamodb")
 cloudwatch = get_client("cloudwatch")

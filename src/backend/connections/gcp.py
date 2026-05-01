@@ -1,5 +1,5 @@
-from backend.services.resources import get_resource_from_db
-from backend.connections.db import save_resource_in_db, convert_floats
+from services.resources import get_resource_from_db
+from connections.db import save_resource_in_db, convert_floats
 from datetime import datetime
 
 async def list_cloud_storage():

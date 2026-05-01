@@ -1,6 +1,6 @@
 import boto3
 
-from backend.connections.aws import get_client, get_region
+from connections.aws import get_client, get_region
 AWS_REGION = get_region()
 
 ec2 = get_client("ec2")

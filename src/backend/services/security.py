@@ -4,7 +4,7 @@ import json
 from datetime import datetime, timezone
 
 from botocore.exceptions import ClientError
-from backend.aws.util import apply_aws_commands
+from aws.util import apply_aws_commands
 
 
 s3 = boto3.client("s3")
