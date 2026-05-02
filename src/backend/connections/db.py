@@ -1,9 +1,9 @@
-
 from datetime import datetime, timedelta
 import boto3
 import boto3
 from dotenv import load_dotenv
 from decimal import Decimal
+import logging
 
 from connections.aws import get_client
 load_dotenv()
@@ -12,6 +12,10 @@ load_dotenv()
 dynamodb =  boto3.resource("dynamodb")
 # DynamoDB table reference
 recommendations_table = dynamodb.Table("Recommendations")
+
+# Set up logging
+logger = logging.getLogger("db")
+logger.setLevel(logging.INFO)
 
 def convert_floats(obj):
     if isinstance(obj, float):
@@ -48,13 +52,17 @@ def save_resource_in_db(resource_id, resource_type, resource_data):
 
 # --- Get a recommendation for resource ---
 def get_resource_from_db(resource_id, resource_type):
-    response = recommendations_table.get_item(
-        Key={
-            "resource_id": resource_id,
-            "resource_type": resource_type
-        }
-    )
-    return response.get("Item")
+    try:
+        response = recommendations_table.get_item(
+            Key={
+                "resource_id": resource_id,
+                "resource_type": resource_type
+            }
+        )
+        return response.get("Item")
+    except Exception as e:
+        logger.error(f"Error fetching resource from DynamoDB: {e}")
+        return None
 
 
 # --- Update recommendation status ---

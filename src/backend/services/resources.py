@@ -13,8 +13,10 @@ async def get_all_resources():
     ec2_resources= await list_ec2_instances()
     s3_resources = await list_s3_buckets()
     dynamo_resources=await list_dynamodb_tables()  
-    cloud_storage=await list_cloud_storage()
-    resources=ec2_resources + s3_resources + dynamo_resources + cloud_storage
+    # cloud_storage=await list_cloud_storage()
+    # resources=ec2_resources + s3_resources + dynamo_resources + cloud_storage
+    resources=ec2_resources + s3_resources + dynamo_resources
+
     for res in resources:
         if res['status']=='running':
             global running_resources

@@ -1,4 +1,4 @@
-from . import overview
+from services import overview
 from fastapi import APIRouter
 
 router = APIRouter(prefix="/resources", tags=["resources"])
