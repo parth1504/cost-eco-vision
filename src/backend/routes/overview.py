@@ -1,7 +1,7 @@
 from . import overview
 from fastapi import APIRouter
 
-router = APIRouter(prefix="/resources", tags=["resources"])
+router = APIRouter(prefix="/overview", tags=["overview"])
 
 @router.get("")
 async def get_overview():

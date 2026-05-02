@@ -1,7 +1,7 @@
 
 from datetime import datetime, timedelta
 import boto3
-import boto3
+from botocore.exceptions import ClientError
 from dotenv import load_dotenv
 from decimal import Decimal
 
@@ -10,8 +10,10 @@ load_dotenv()
 
 # --- DynamoDB Setup ---
 dynamodb =  boto3.resource("dynamodb")
-# DynamoDB table reference
+# DynamoDB table references
 recommendations_table = dynamodb.Table("Recommendations")
+alerts_table = dynamodb.Table("Alerts")
+incidents_table = dynamodb.Table("Incidents")
 
 def convert_floats(obj):
     if isinstance(obj, float):
@@ -48,13 +50,21 @@ def save_resource_in_db(resource_id, resource_type, resource_data):
 
 # --- Get a recommendation for resource ---
 def get_resource_from_db(resource_id, resource_type):
-    response = recommendations_table.get_item(
-        Key={
-            "resource_id": resource_id,
-            "resource_type": resource_type
-        }
-    )
-    return response.get("Item")
+    try:
+        response = recommendations_table.get_item(
+            Key={
+                "resource_id": resource_id,
+                "resource_type": resource_type
+            }
+        )
+        return response.get("Item")
+    except ClientError as e:
+        # Table doesn't exist yet — treat as cache miss instead of crashing the API.
+        # Run `python -m scripts.setup_dynamodb` to create it.
+        if e.response["Error"]["Code"] == "ResourceNotFoundException":
+            print("[db] Recommendations table missing — run scripts/setup_dynamodb.py")
+            return None
+        raise
 
 
 # --- Update recommendation status ---
@@ -70,6 +80,90 @@ def update_resource_status(resource_id, resource_type, new_status):
         ReturnValues="UPDATED_NEW"
     )
     return response
+
+
+# =============================================================================
+# Alerts table
+# =============================================================================
+
+def upsert_alert(alert: dict):
+    """Persist an alert (idempotent — same alert_id overwrites)."""
+    item = convert_floats({**alert, "last_seen_time": datetime.utcnow().isoformat()})
+    try:
+        alerts_table.put_item(Item=item)
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "ResourceNotFoundException":
+            print("[db] Alerts table missing — run scripts/setup_dynamodb.py")
+            return None
+        raise
+    return item
+
+
+def get_alerts_for_incident(incident_id: str):
+    """Use the GSI to fetch all alerts that belong to a given incident."""
+    try:
+        response = alerts_table.query(
+            IndexName="incident_id-index",
+            KeyConditionExpression="incident_id = :iid",
+            ExpressionAttributeValues={":iid": incident_id},
+        )
+        return response.get("Items", [])
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "ResourceNotFoundException":
+            return []
+        raise
+
+
+def set_alert_incident(alert_id: str, incident_id: str):
+    """Tag an alert with its incident membership."""
+    try:
+        alerts_table.update_item(
+            Key={"alert_id": alert_id},
+            UpdateExpression="SET incident_id = :iid",
+            ExpressionAttributeValues={":iid": incident_id},
+        )
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "ResourceNotFoundException":
+            return
+        raise
+
+
+# =============================================================================
+# Incidents table
+# =============================================================================
+
+def upsert_incident(incident: dict):
+    """Persist or update an incident row."""
+    item = convert_floats({**incident, "updated_at": datetime.utcnow().isoformat()})
+    try:
+        incidents_table.put_item(Item=item)
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "ResourceNotFoundException":
+            print("[db] Incidents table missing — run scripts/setup_dynamodb.py")
+            return None
+        raise
+    return item
+
+
+def get_incident(incident_id: str):
+    try:
+        response = incidents_table.get_item(Key={"incident_id": incident_id})
+        return response.get("Item")
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "ResourceNotFoundException":
+            return None
+        raise
+
+
+def list_incidents():
+    """Scan all incidents (fine for small N; switch to a status-GSI if it grows)."""
+    try:
+        response = incidents_table.scan()
+        return response.get("Items", [])
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "ResourceNotFoundException":
+            return []
+        raise
 
 
 # --- Cooldown Check ---

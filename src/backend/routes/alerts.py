@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Body, HTTPException
-from . import alerts
+from services import alerts
 router = APIRouter(prefix="/alerts", tags=["alerts"])
 
 

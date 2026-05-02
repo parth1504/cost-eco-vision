@@ -8,3 +8,6 @@ boto3
 dotenv
 PyGithub==1.58
 reportlab==4.0.0
+boto3==1.43.2
+# Bedrock Converse API is used via boto3 — no extra deps needed.
+# (anthropic SDK no longer required since we moved to provider-agnostic Converse.)
