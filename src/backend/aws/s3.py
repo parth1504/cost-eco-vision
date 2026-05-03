@@ -183,7 +183,7 @@ s3_recommendations = [
     # }
 ]
 
-def get_bucket_storage_utilization(bucket_name, region="eu-north-1"):
+def get_bucket_storage_utilization(bucket_name, region="us-east-1"):
     """Return % of data in S3 Standard storage class (or fallback utilization)."""
 
     try:
@@ -229,7 +229,6 @@ async def list_s3_buckets():
 
         for bucket in response.get("Buckets", []):
             name = bucket.get("Name")
-            
 
             db_item = get_resource_from_db(name, "S3")
 
@@ -257,7 +256,9 @@ async def list_s3_buckets():
                     "monthly_cost": cost,
                     "region": region,
                     "provider": "AWS",
-                    "last_activity": creation_date.isoformat() if creation_date else None,
+                    "last_agent_run": datetime.utcnow().isoformat(),
+                    "creation_date": creation_date,
+
                     "is_optimized": False,
                     "recommendations": replace_placeholders(
                         s3_recommendations,

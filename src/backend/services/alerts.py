@@ -5,7 +5,7 @@ from connections.db import save_resource_in_db, get_resource_from_db
 from decimal import Decimal
 from fastapi import HTTPException
 from aws.util import apply_aws_commands
-
+from aws.util import generate_recommendation_id
 
 
 def decimal_to_float(obj):
@@ -30,8 +30,9 @@ async def generate_alerts_from_resources() -> List[Dict[str, Any]]:
         recs = resource.get("recommendations", [])
 
         for rec in recs:
+ 
             alert = {
-                "id": f"{resource_id}:{rec.get('title').replace(' ', '~')}",
+                "id": generate_recommendation_id(resource_id, rec.get("title", "no-title")),  # e.g. i-12345678:stop-unused
                 "title": rec.get("title"),
                 "message": rec.get("issue"),               # one-line issue
                 "severity": rec.get("severity").capitalize(),

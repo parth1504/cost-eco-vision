@@ -204,6 +204,7 @@ async def list_dynamodb_tables():
                 item_count = desc.get("ItemCount")
                 size_bytes = desc.get("TableSizeBytes")
                 status = desc.get("TableStatus", "UNKNOWN")
+                launch_time = desc.get("LaunchTime")
                 creation = desc.get("CreationDateTime")
                 region = dynamodb.meta.region_name
 
@@ -222,7 +223,8 @@ async def list_dynamodb_tables():
                     "is_optimized": False,
                     "item_count": item_count,
                     "table_size_bytes": size_bytes,
-                    "last_activity": creation.isoformat() if creation else None,
+                    "last_agent_run": datetime.utcnow().isoformat(),
+                    "creation_date": launch_time.isoformat() if launch_time else None,
                     "recommendations": replace_placeholders(
                         dynamodb_recommendations,
                         {"TABLE_NAME": name}
@@ -239,7 +241,7 @@ async def list_dynamodb_tables():
         print(f"Error in list_dynamodb_tables: {e}")
         return []
 
-def get_consumed_read_write_capacity(table_name, region="eu-north-1"):
+def get_consumed_read_write_capacity(table_name, region="us-east-1"):
     """Return % DynamoDB capacity usage based on consumed RCUs/WCUs."""
 
     try:

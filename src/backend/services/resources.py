@@ -10,6 +10,7 @@ running_resources=0
 idle_resources=0
 async def get_all_resources():
     # return mock_resources
+    print("Fetching all resources from AWS...")
     ec2_resources= await list_ec2_instances()
     s3_resources = await list_s3_buckets()
     dynamo_resources=await list_dynamodb_tables()  

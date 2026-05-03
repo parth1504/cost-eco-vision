@@ -1,8 +1,10 @@
 from connections.aws import get_client
 from connections.db import get_resource_from_db, save_resource_in_db
-from aws.util import replace_placeholders, get_resource_cost
-
+from aws.util import  get_resource_cost, should_run_agent
 from datetime import datetime, timedelta
+from agent.analyzer_agent.main import generateRecommendations
+
+
 ec2 = get_client("ec2")
 cloudwatch = get_client("cloudwatch")
 
@@ -101,7 +103,7 @@ async def list_ec2_instances():
         response = ec2.describe_instances()
         instances = []
         
-
+        print(f"Found {len(response.get('Reservations', []))} EC2 reservations")
         for reservation in response.get("Reservations", []):
             for instance in reservation.get("Instances", []):
 
@@ -109,44 +111,26 @@ async def list_ec2_instances():
                 
                 # --- CHECK DYNAMODB ---
                 db_item = get_resource_from_db(instance_id, "EC2")
-                
+                print(f"Checking DB for EC2 {instance_id}: {'Found' if db_item else 'Not Found'}")
                 if db_item:
-                    # Load stored fields (important for state persistence)
-                    instance_data=db_item
-                    instance_data['resource_id']=instance_id
+                    instance_data = db_item
+                    instance_data["resource_id"] = instance_id
+
+                    last_run = instance_data.get("last_agent_run")
+                    print(f"EC2 {instance_id} - last agent run: {last_run}")
+                    print(f"EC2 {instance_id} - should run agent? {should_run_agent(last_run)}")
+                    if should_run_agent(last_run):
+                        recommendations = generateRecommendations(instance_data)
+                        instance_data["recommendations"] = recommendations
+                        instance_data["last_agent_run"] = datetime.utcnow().isoformat()
+
+                        save_resource_in_db(instance_id, "EC2", instance_data)
                 else:
-                    # Save new record
-                    state = instance.get("State", {}).get("Name", "unknown")
-                    instance_type = instance.get("InstanceType", "unknown")
-                    region = ec2.meta.region_name
-                    launch_time = instance.get("LaunchTime")
-
-                    name_tag = next(
-                        (tag["Value"] for tag in instance.get("Tags", []) if tag["Key"] == "Name"),
-                        "Unnamed-Instance"
-                    )
-
-                    utilization = get_instance_utilization(instance_id, region, launch_time)
-                    cost = get_resource_cost("InstanceId", instance_id)
-
-                    # Base object
-                    instance_data = {
-                        "resource_id": instance_id,
-                        "name": name_tag,
-                        "type": "EC2",
-                        "status": state.lower(),
-                        "utilization": utilization,
-                        "monthly_cost": cost,
-                        "region": region,
-                        "provider": "AWS",
-                        "is_optimized": False,
-                        "last_activity": launch_time.isoformat() if launch_time else None,
-                        "creation_date": launch_time.isoformat() if launch_time else None,
-                        "recommendations": replace_placeholders(
-                        ec2_recommendations,
-                        {"INSTANCE_ID": instance_id}
-                    )
-                    }
+                    instance_data=build_ec2_resource(instance)
+                    print(f"Built EC2 resource data for {instance_id}: {instance_data}")
+                    print("-------------------------------------------------------------------------")
+                    recommendations=generateRecommendations(instance_data)
+                    instance_data["recommendations"]=recommendations
 
                     saved = save_resource_in_db(instance_id, "EC2", instance_data)
 
@@ -158,7 +142,41 @@ async def list_ec2_instances():
         print(f"Error in list_ec2_instances: {e}")
         return []
 
-def get_instance_utilization(instance_id, region="eu-north-1",start_time=None,end_time=None):
+def build_ec2_resource(instance):
+    instance_id = instance.get("InstanceId")
+    state = instance.get("State", {}).get("Name", "unknown")
+    instance_type = instance.get("InstanceType", "unknown")
+    region = ec2.meta.region_name
+    launch_time = instance.get("LaunchTime")
+    name_tag = next(
+        (tag["Value"] for tag in instance.get("Tags", []) if tag["Key"] == "Name"),
+        "Unnamed-Instance"
+    )
+
+    utilization = get_instance_utilization(instance_id, region, launch_time)
+    cost = get_resource_cost("InstanceId", instance_id)
+    metrics = get_all_ec2_metrics(instance_id, cloudwatch)
+
+    return {
+        "resource_id": instance_id,
+        "name": name_tag,
+        "type": "EC2",
+        "status": state.lower(),
+        "utilization": utilization,
+        "metrics": metrics,
+        "config": {
+            "instance_type": instance_type
+        },
+        "monthly_cost": cost,
+        "region": region,
+        "provider": "AWS",
+        "is_optimized": False,
+        "last_agent_run": datetime.utcnow().isoformat(),
+        "creation_date": launch_time.isoformat() if launch_time else None,
+        
+    }
+
+def get_instance_utilization(instance_id, region="us-east-1",start_time=None,end_time=None):
     end_time = datetime.utcnow()
 
     metrics = cloudwatch.get_metric_statistics(
@@ -172,3 +190,99 @@ def get_instance_utilization(instance_id, region="eu-north-1",start_time=None,en
     )
     datapoints = metrics.get("Datapoints", [])
     return round(datapoints[-1]["Average"], 2) if datapoints else 0.0
+
+def get_all_ec2_metrics(instance_id, cloudwatch_client):
+    """
+    Fetch all relevant EC2 metrics for last 7 days.
+    Returns aggregated + optional time series for agent use.
+    """
+
+    end_time = datetime.utcnow()
+    start_time = end_time - timedelta(days=7)
+
+    def fetch_metric(metric_name, statistics=["Average"]):
+        try:
+            response = cloudwatch_client.get_metric_statistics(
+                Namespace='AWS/EC2',
+                MetricName=metric_name,
+                Dimensions=[
+                    {'Name': 'InstanceId', 'Value': instance_id}
+                ],
+                StartTime=start_time,
+                EndTime=end_time,
+                Period=3600,
+                Statistics=statistics
+            )
+
+            datapoints = response.get("Datapoints", [])
+
+            if not datapoints:
+                return None, None
+
+            values = []
+            for dp in datapoints:
+                for stat in statistics:
+                    if stat in dp:
+                        values.append(dp[stat])
+
+            if not values:
+                return None, None
+
+            avg = round(sum(values) / len(values), 2)
+            peak = round(max(values), 2)
+
+            return avg, peak
+
+        except Exception as e:
+            print(f"Error fetching {metric_name} for {instance_id}: {e}")
+            return None, None
+
+    # ------------------------
+    # CPU
+    # ------------------------
+    cpu_avg, cpu_max = fetch_metric("CPUUtilization", ["Average", "Maximum"])
+
+    # ------------------------
+    # Network
+    # ------------------------
+    net_in_avg, net_in_max = fetch_metric("NetworkIn")
+    net_out_avg, net_out_max = fetch_metric("NetworkOut")
+
+    # ------------------------
+    # Disk IO
+    # ------------------------
+    disk_read_avg, disk_read_max = fetch_metric("DiskReadOps")
+    disk_write_avg, disk_write_max = fetch_metric("DiskWriteOps")
+
+    # ------------------------
+    # Status Checks (Health)
+    # ------------------------
+    status_check_avg, status_check_max = fetch_metric("StatusCheckFailed")
+
+    # ------------------------
+    # Build final object
+    # ------------------------
+    metrics = {
+        "cpu": {
+            "avg_7d": cpu_avg,
+            "max_7d": cpu_max
+        },
+        "network": {
+            "in_avg_7d": net_in_avg,
+            "in_peak_7d": net_in_max,
+            "out_avg_7d": net_out_avg,
+            "out_peak_7d": net_out_max
+        },
+        "disk": {
+            "read_avg_7d": disk_read_avg,
+            "read_peak_7d": disk_read_max,
+            "write_avg_7d": disk_write_avg,
+            "write_peak_7d": disk_write_max
+        },
+        "health": {
+            "status_check_failed_avg": status_check_avg,
+            "status_check_failed_max": status_check_max
+        }
+    }
+
+    return metrics

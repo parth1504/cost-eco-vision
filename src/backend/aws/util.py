@@ -3,6 +3,7 @@ from connections.aws import get_client
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
 import logging
+from datetime import datetime, timedelta
 
 # Set up logging
 logger = logging.getLogger("aws_util")
@@ -116,7 +117,6 @@ async def apply_aws_commands(commands: list):
 
     return results
 
-
 def get_resource_cost(tag_key, tag_value):
     """
     Universal AWS Cost function for EC2, S3, DynamoDB...
@@ -162,3 +162,49 @@ def get_resource_cost(tag_key, tag_value):
 
     return 0.0
 
+
+def should_run_agent(last_agent_run: str, threshold_minutes: int = 60,force=False,) -> bool:
+    if force:
+        return True
+    if not last_agent_run:
+        return True
+
+    try:
+        last_run_time = datetime.fromisoformat(last_agent_run.replace("Z", ""))
+        return datetime.utcnow() - last_run_time > timedelta(minutes=threshold_minutes)
+    except Exception:
+        return True  # fail-safe → recompute
+
+def generate_recommendation_id(resource_id, title):
+    return f"{resource_id}:{title.replace(' ', '~')}"
+
+def normalize_tags(tags):
+    return {tag["Key"]: tag["Value"] for tag in tags or []}
+def execute_boto3_sequence(sequence, clients):
+
+    results = []
+
+    for step in sequence:
+        service = step["service"]
+        operation = step["operation"]
+        params = step["params"]
+
+        client = clients.get(service)
+
+        try:
+            func = getattr(client, operation)
+            response = func(**params)
+
+            results.append({
+                "status": "success",
+                "operation": operation
+            })
+
+        except Exception as e:
+            results.append({
+                "status": "failed",
+                "operation": operation,
+                "error": str(e)
+            })
+
+    return results
