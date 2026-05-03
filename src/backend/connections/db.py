@@ -14,6 +14,7 @@ dynamodb =  boto3.resource("dynamodb")
 recommendations_table = dynamodb.Table("Recommendations")
 alerts_table = dynamodb.Table("Alerts")
 incidents_table = dynamodb.Table("Incidents")
+security_triage_table = dynamodb.Table("SecurityTriage")
 
 # Set up logging
 logger = logging.getLogger("db")
@@ -163,6 +164,47 @@ def list_incidents():
     """Scan all incidents (fine for small N; switch to a status-GSI if it grows)."""
     try:
         response = incidents_table.scan()
+        return response.get("Items", [])
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "ResourceNotFoundException":
+            return []
+        raise
+
+
+# =============================================================================
+# Security triage cache
+# =============================================================================
+
+def upsert_security_triage(finding_id: str, triage: dict):
+    """Cache LLM triage output for a security finding."""
+    item = convert_floats({
+        "finding_id": finding_id,
+        **triage,
+        "cached_at": datetime.utcnow().isoformat(),
+    })
+    try:
+        security_triage_table.put_item(Item=item)
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "ResourceNotFoundException":
+            print("[db] SecurityTriage table missing — run scripts/setup_dynamodb.py")
+            return None
+        raise
+    return item
+
+
+def get_security_triage(finding_id: str):
+    try:
+        response = security_triage_table.get_item(Key={"finding_id": finding_id})
+        return response.get("Item")
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "ResourceNotFoundException":
+            return None
+        raise
+
+
+def list_security_triage():
+    try:
+        response = security_triage_table.scan()
         return response.get("Items", [])
     except ClientError as e:
         if e.response["Error"]["Code"] == "ResourceNotFoundException":
