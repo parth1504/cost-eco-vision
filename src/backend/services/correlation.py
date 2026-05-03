@@ -2,14 +2,18 @@
 Layer-1 alert correlation: deterministic, no LLM.
 
 Groups a flat list of alerts into incidents using cheap rules:
-  - time proximity  (alerts within TIME_WINDOW_MINUTES of each other)
-  - resource overlap (same affected resource)
-  - resource-type + region overlap (same blast surface)
+  - **Time proximity** (alerts within TIME_WINDOW_MINUTES of each other)
+  - **Same category** — cost / security / performance / drift never merge
+    (different responders, different lifecycles, different blast surfaces)
+  - **Shared blast surface** — at least one of:
+      * same affected resource_id
+      * shared business tag (Service, Owner, Environment, Application)
 
-Output: a list of incident clusters. Each cluster is a dict with
-member alert ids, the resources involved, severity (max of members),
-and a stable incident_id derived from the cluster's earliest alert
-+ resource fingerprint (so re-running on the same alerts is idempotent).
+Output: a list of incident clusters. Each cluster carries a stable
+`incident_id` derived from `(date + category + sorted resources_affected)` —
+re-running on the same alerts (or a superset where new alerts join the same
+resources) produces the same id, so upserts are idempotent and UIs can
+bookmark incident URLs without breaking on the next scan.
 
 Layer 2 (LLM-based semantic correlation across services) and Layer 3
 (narrative + root cause) plug in on top of this — they consume incidents
@@ -26,6 +30,11 @@ from typing import Any, Dict, Iterable, List, Set, Tuple
 TIME_WINDOW_MINUTES = 15
 
 SEVERITY_RANK = {"low": 1, "medium": 2, "high": 3, "critical": 4}
+
+# Tags that signal "these resources are part of the same business surface".
+# If two alerts share any of these (key + value), they're considered related
+# regardless of differing resource_ids.
+CORRELATION_TAGS = ("Service", "Owner", "Environment", "Application", "Team")
 
 
 # ---------------------------------------------------------------------------
@@ -51,6 +60,34 @@ def _alert_resources(alert: Dict[str, Any]) -> Set[str]:
     return {str(r) for r in res if r}
 
 
+def _alert_category(alert: Dict[str, Any]) -> str:
+    """Best-effort category extraction. Prefers explicit `category`, falls
+    back to `source` (lowercased), then "other"."""
+    cat = (alert.get("category") or "").strip().lower()
+    if cat:
+        return cat
+    src = (alert.get("source") or "other").strip().lower()
+    return src
+
+
+def _alert_tags(alert: Dict[str, Any]) -> Dict[str, str]:
+    """Normalise tags to a {str: str} dict, ignoring empty values."""
+    tags = alert.get("tags") or {}
+    return {str(k): str(v) for k, v in tags.items() if k and v}
+
+
+def _shared_correlation_tag(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
+    """True if a and b share a value on any tag in CORRELATION_TAGS."""
+    ta = _alert_tags(a)
+    tb = _alert_tags(b)
+    for key in CORRELATION_TAGS:
+        va = ta.get(key)
+        vb = tb.get(key)
+        if va and vb and va == vb:
+            return True
+    return False
+
+
 def _max_severity(alerts: Iterable[Dict[str, Any]]) -> str:
     best = "low"
     best_rank = 0
@@ -63,12 +100,20 @@ def _max_severity(alerts: Iterable[Dict[str, Any]]) -> str:
     return best
 
 
-def _stable_incident_id(member_alert_ids: List[str], earliest_ts: datetime) -> str:
+def _stable_incident_id(category: str, resources: List[str], earliest_ts: datetime) -> str:
     """
-    Deterministic id so re-running correlation on the same alerts produces
-    the same incident_id (lets us upsert instead of duplicating).
+    Deterministic id derived from (category + sorted resources + date).
+
+    Why these inputs:
+      - **Resources** instead of member ids: the same incident can pick up
+        new alerts on the SAME resources without changing id.
+      - **Category**: cost vs security incidents on overlapping resources
+        are different incidents and must have different ids.
+      - **Date**: a recurring misconfiguration on the same bucket on
+        different days should be different incidents (different timeline,
+        different remediation context).
     """
-    fingerprint = "|".join(sorted(member_alert_ids))
+    fingerprint = f"{category}|" + "|".join(sorted(resources))
     digest = hashlib.sha1(fingerprint.encode()).hexdigest()[:10]
     return f"INC-{earliest_ts.strftime('%Y%m%d')}-{digest}"
 
@@ -99,22 +144,27 @@ class _UnionFind:
 
 def _are_related(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
     """
-    Two alerts are 'related' (belong in the same incident) when:
-      * they fired within TIME_WINDOW_MINUTES of each other, AND
-      * they share at least one affected resource
-        OR they share resource_type + region (same blast surface).
+    Two alerts are 'related' (belong in the same incident) when ALL of:
+      1. They fired within TIME_WINDOW_MINUTES of each other
+      2. They share a category (cost ≠ security, etc.)
+      3. They share a blast surface — at least one of:
+           a. an affected resource_id
+           b. a value on one of the CORRELATION_TAGS
     """
+    # 1. Time
     ts_a = _parse_ts(a.get("timestamp", ""))
     ts_b = _parse_ts(b.get("timestamp", ""))
     if abs((ts_a - ts_b).total_seconds()) > TIME_WINDOW_MINUTES * 60:
         return False
 
+    # 2. Category — different domains never merge.
+    if _alert_category(a) != _alert_category(b):
+        return False
+
+    # 3. Shared blast surface
     if _alert_resources(a) & _alert_resources(b):
         return True
-
-    same_type = a.get("resource_type") and a.get("resource_type") == b.get("resource_type")
-    same_region = a.get("region") and a.get("region") == b.get("region")
-    if same_type and same_region:
+    if _shared_correlation_tag(a, b):
         return True
 
     return False
@@ -133,10 +183,12 @@ def correlate_alerts(alerts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
           "incident_id":          "INC-YYYYMMDD-<hash>",
           "status":               "open",
           "severity":             "critical",
+          "category":             "security",
           "created_at":           "2024-..." (earliest member ts),
           "member_alert_ids":     [...],
           "resources_affected":   [...],
-          "title":                "<derived from first alert>",
+          "shared_tags":          {Service: "auth", ...},
+          "title":                "<derived from highest-severity alert>",
           "source_count":         <distinct sources represented>,
         }
 
@@ -150,7 +202,8 @@ def correlate_alerts(alerts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     uf = _UnionFind(n)
 
     # O(n^2) is fine here — alert volumes are small. If this ever
-    # gets hot, bucket by resource_id first then only compare within buckets.
+    # gets hot, bucket by (category, resource_id) first then only compare
+    # within buckets.
     for i in range(n):
         for j in range(i + 1, n):
             if _are_related(alerts[i], alerts[j]):
@@ -165,11 +218,25 @@ def correlate_alerts(alerts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     for member_idxs in clusters.values():
         members = [alerts[i] for i in member_idxs]
         member_ids = [m["id"] for m in members if m.get("id")]
-        earliest = min((_parse_ts(m.get("timestamp", "")) for m in members), default=datetime.utcnow())
+        earliest = min(
+            (_parse_ts(m.get("timestamp", "")) for m in members),
+            default=datetime.utcnow(),
+        )
 
         all_resources: Set[str] = set()
         for m in members:
             all_resources |= _alert_resources(m)
+        sorted_resources = sorted(all_resources)
+
+        category = _alert_category(members[0])  # all members share this
+
+        # Tags shared by ALL members of the cluster — surface for explainability.
+        shared: Dict[str, str] = {}
+        if members:
+            first_tags = _alert_tags(members[0])
+            for k, v in first_tags.items():
+                if k in CORRELATION_TAGS and all(_alert_tags(m).get(k) == v for m in members):
+                    shared[k] = v
 
         sources = {m.get("source") for m in members if m.get("source")}
 
@@ -180,12 +247,14 @@ def correlate_alerts(alerts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         )
 
         incidents.append({
-            "incident_id": _stable_incident_id(member_ids, earliest),
+            "incident_id": _stable_incident_id(category, sorted_resources, earliest),
             "status": "open",
             "severity": _max_severity(members),
+            "category": category,
             "created_at": earliest.isoformat() + "Z",
             "member_alert_ids": member_ids,
-            "resources_affected": sorted(all_resources),
+            "resources_affected": sorted_resources,
+            "shared_tags": shared,
             "title": leading.get("title") or "Untitled incident",
             "source_count": len(sources),
         })

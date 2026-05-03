@@ -45,8 +45,16 @@ from connections.db import (
 # DOES NOT WORK (no tool use support on Bedrock):
 #   us.deepseek.r1-v1:0                              (text-only)
 #   meta.llama3-1-* and older                        (varies)
-MODEL = os.getenv("BEDROCK_MODEL_ID", "us.amazon.nova-pro-v1:0")
-AWS_REGION = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
+MODEL = os.getenv("BEDROCK_MODEL_ID", "global.anthropic.claude-opus-4-6-v1")
+# Bedrock region can differ from DynamoDB region — quotas are per-region, so
+# if us-east-1 is zeroed out, try us-west-2 or eu-central-1 by setting
+# BEDROCK_REGION in .env. Falls back to AWS_REGION for the DDB-default case.
+AWS_REGION = (
+    os.getenv("BEDROCK_REGION")
+    or os.getenv("AWS_REGION")
+    or os.getenv("AWS_DEFAULT_REGION")
+    or "us-east-1"
+)
 
 MAX_LOOP_TURNS = 8           # hard cap on tool-call iterations — prevents runaways
 MAX_TOKENS = 4096            # plenty for a structured payload + a few tool calls

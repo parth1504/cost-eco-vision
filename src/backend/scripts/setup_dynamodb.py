@@ -66,6 +66,19 @@ TABLES = [
         ],
         "BillingMode": "PAY_PER_REQUEST",
     },
+    {
+        # Cached AI triage for security findings — keyed by the finding's stable id
+        # (resource id / bucket name / sg id / etc.) so re-running the security
+        # scan doesn't lose previously-generated triage context.
+        "TableName": "SecurityTriage",
+        "KeySchema": [
+            {"AttributeName": "finding_id", "KeyType": "HASH"},
+        ],
+        "AttributeDefinitions": [
+            {"AttributeName": "finding_id", "AttributeType": "S"},
+        ],
+        "BillingMode": "PAY_PER_REQUEST",
+    },
 ]
 
 

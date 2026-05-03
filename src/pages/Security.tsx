@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Shield, AlertTriangle, CheckCircle, Eye, Lock, FileText, DollarSign,Key, RotateCcw, TrendingUp, } from "lucide-react";
+import { Shield, AlertTriangle, CheckCircle, Eye, Lock, FileText, DollarSign,Key, RotateCcw, TrendingUp, Sparkles, RefreshCw } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -67,12 +67,70 @@ export function Security() {
   const [scoreTrend, setScoreTrend] = useState<any[]>([]);
   const [weeklyData, setWeeklyData] = useState<any[]>([]);
   const [keys, setKeys] = useState<any[]>([]);
+  const [compliance, setCompliance] = useState<{
+    enabled: boolean;
+    message?: string;
+    enable_command?: string;
+    standards: Array<{
+      framework: string;
+      score: number | null;
+      passed: number;
+      failed: number;
+      total_controls: number;
+      subscription_status?: string;
+    }>;
+  } | null>(null);
+  const [triageRunning, setTriageRunning] = useState(false);
 
 
   useEffect(() => {
     fetchSecurityData();
     fetchSecurityData2();
+    fetchCompliance();
   }, []);
+
+  const runTriage = async (force = false) => {
+    setTriageRunning(true);
+    try {
+      const res = await fetch(`http://localhost:8000/security/triage${force ? "?force=true" : ""}`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const body = await res.text();
+        throw new Error(body || `Backend returned ${res.status}`);
+      }
+      const data = await res.json();
+      // Replace findings with the triaged batch.
+      if (Array.isArray(data.findings)) {
+        setFindings(data.findings);
+      }
+      toast({
+        title: "AI Triage complete",
+        description: `${data.triaged} finding(s) enriched with context.`,
+      });
+    } catch (err) {
+      console.error("Triage failed:", err);
+      toast({
+        title: "Triage failed",
+        description: String(err),
+        variant: "destructive",
+      });
+    } finally {
+      setTriageRunning(false);
+    }
+  };
+
+  const fetchCompliance = async () => {
+    try {
+      const response = await fetch("http://localhost:8000/security/compliance");
+      if (!response.ok) throw new Error(`Backend returned ${response.status}`);
+      const data = await response.json();
+      setCompliance(data);
+    } catch (error) {
+      console.error("Failed to fetch compliance data:", error);
+      setCompliance({ enabled: false, message: "Unable to reach Security Hub.", standards: [] });
+    }
+  };
 
   const fetchSecurityData = async () => {
     try {
@@ -278,12 +336,24 @@ export function Security() {
         <motion.div variants={itemVariants} className="lg:col-span-2">
           <Card className="dashboard-card">
             <CardHeader>
-              <CardTitle className="flex items-center space-x-2">
-                <AlertTriangle className="h-5 w-5" />
-                <span>Security Findings</span>
+              <CardTitle className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <AlertTriangle className="h-5 w-5" />
+                  <span>Security Findings</span>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => runTriage(false)}
+                  disabled={triageRunning || findings.length === 0}
+                >
+                  <Sparkles className={`h-4 w-4 mr-2 ${triageRunning ? "animate-pulse" : ""}`} />
+                  {triageRunning ? "Triaging..." : "Run AI Triage"}
+                </Button>
               </CardTitle>
               <CardDescription>
-                AI-detected security vulnerabilities and recommended fixes
+                Live findings from your AWS account. Click <strong>Run AI Triage</strong> to add
+                context-aware severity, plain-language explanations, and cross-finding correlations.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -311,6 +381,73 @@ export function Security() {
                     </AccordionTrigger>
                     <AccordionContent className="pt-4">
                       <div className="space-y-4">
+                        {/* AI Triage (only shown after Run AI Triage) */}
+                        {(finding as any).aiTriage && (
+                          <div className="p-4 bg-primary/5 border border-primary/20 rounded-lg space-y-3">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center space-x-2">
+                                <Sparkles className="h-4 w-4 text-primary" />
+                                <h4 className="font-medium text-foreground">AI Triage</h4>
+                              </div>
+                              <div className="flex items-center space-x-2">
+                                <Badge className={getSeverityColor((finding as any).aiTriage.contextualisedSeverity)}>
+                                  {(finding as any).aiTriage.contextualisedSeverity}
+                                </Badge>
+                                <span className="text-xs text-muted-foreground">
+                                  {(finding as any).aiTriage.confidence}% confidence
+                                </span>
+                              </div>
+                            </div>
+
+                            {(finding as any).aiTriage.contextualisedSeverity !== finding.severity && (
+                              <p className="text-xs text-muted-foreground italic">
+                                Severity adjusted from <strong>{finding.severity}</strong>:{" "}
+                                {(finding as any).aiTriage.severityRationale}
+                              </p>
+                            )}
+
+                            <div>
+                              <p className="text-xs font-medium text-muted-foreground mb-1">Why it matters</p>
+                              <p className="text-sm">{(finding as any).aiTriage.whyItMatters}</p>
+                            </div>
+
+                            {Array.isArray((finding as any).aiTriage.blastRadius) && (finding as any).aiTriage.blastRadius.length > 0 && (
+                              <div>
+                                <p className="text-xs font-medium text-muted-foreground mb-1">Blast radius</p>
+                                <ul className="text-sm space-y-1">
+                                  {(finding as any).aiTriage.blastRadius.map((b: string, i: number) => (
+                                    <li key={i}>• {b}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+
+                            {Array.isArray((finding as any).aiTriage.tailoredRemediationNotes) && (finding as any).aiTriage.tailoredRemediationNotes.length > 0 && (
+                              <div>
+                                <p className="text-xs font-medium text-muted-foreground mb-1">Context-specific notes</p>
+                                <ul className="text-sm space-y-1">
+                                  {(finding as any).aiTriage.tailoredRemediationNotes.map((n: string, i: number) => (
+                                    <li key={i}>• {n}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+
+                            {Array.isArray((finding as any).aiTriage.relatedFindingIds) && (finding as any).aiTriage.relatedFindingIds.length > 0 && (
+                              <div>
+                                <p className="text-xs font-medium text-muted-foreground mb-1">Related findings</p>
+                                <div className="flex flex-wrap gap-1">
+                                  {(finding as any).aiTriage.relatedFindingIds.map((rid: string) => (
+                                    <Badge key={rid} variant="outline" className="text-xs font-mono">
+                                      {rid}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
                         {/* Description */}
                         <div>
                           <h4 className="font-medium text-foreground mb-2">Description</h4>
@@ -331,7 +468,7 @@ export function Security() {
 
                         {/* Remediation */}
                         <div>
-                          <h4 className="font-medium text-foreground mb-2">AI Remediation</h4>
+                          <h4 className="font-medium text-foreground mb-2">Remediation Steps</h4>
 
                           {/* Title */}
                           <div className="p-3 bg-primary/5 border border-primary/20 rounded-lg space-y-3">
@@ -402,7 +539,7 @@ export function Security() {
 
         {/* Compliance & Insights */}
         <motion.div variants={itemVariants} className="space-y-6">
-          {/* Compliance Status */}
+          {/* Compliance Status — backed by AWS Security Hub */}
           <Card className="dashboard-card">
             <CardHeader>
               <CardTitle className="flex items-center space-x-2">
@@ -410,23 +547,46 @@ export function Security() {
                 <span>Compliance Status</span>
               </CardTitle>
               <CardDescription>
-                Current compliance framework coverage
+                Live scores from AWS Security Hub
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              {complianceItems.map((item) => {
-                const coverage = computeComplianceCoverage(item);
-
-                return (
-                  <div key={item} className="space-y-2">
+              {!compliance ? (
+                <p className="text-sm text-muted-foreground">Loading…</p>
+              ) : !compliance.enabled ? (
+                <div className="space-y-3">
+                  <p className="text-sm text-muted-foreground">{compliance.message}</p>
+                  {compliance.enable_command && (
+                    <pre className="text-xs bg-muted p-2 rounded border overflow-auto">
+                      {compliance.enable_command}
+                    </pre>
+                  )}
+                </div>
+              ) : compliance.standards.length === 0 ? (
+                <p className="text-sm text-muted-foreground">{compliance.message}</p>
+              ) : (
+                compliance.standards.map((s) => (
+                  <div key={s.framework} className="space-y-2">
                     <div className="flex justify-between text-sm">
-                      <span className="font-medium">{item}</span>
-                      <span className="text-muted-foreground">{coverage}%</span>
+                      <span className="font-medium">{s.framework}</span>
+                      <span className="text-muted-foreground">
+                        {s.score == null ? "warming up…" : `${s.score}%`}
+                      </span>
                     </div>
-                    <Progress value={coverage} className="h-2" />
+                    <Progress value={s.score ?? 0} className="h-2" />
+                    {s.total_controls > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        {s.passed} passed · {s.failed} failed · {s.total_controls} controls
+                      </p>
+                    )}
+                    {s.subscription_status && s.subscription_status !== "READY" && (
+                      <p className="text-xs text-warning">
+                        Status: {s.subscription_status}
+                      </p>
+                    )}
                   </div>
-                );
-              })}
+                ))
+              )}
             </CardContent>
           </Card>
 

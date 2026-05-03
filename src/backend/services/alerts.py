@@ -36,6 +36,10 @@ async def generate_alerts_from_resources() -> List[Dict[str, Any]]:
                 "message": rec.get("issue"),               # one-line issue
                 "severity": rec.get("severity").capitalize(),
                 "source": rec.get("type").capitalize(),    # cost / security / performance
+                # Explicit category (lowercased rec.type) — used by correlation
+                # to prevent cross-domain grouping (e.g. cost + security alerts
+                # on the same bucket are tracked as separate incidents).
+                "category": (rec.get("type") or "other").lower(),
                 "affected_resources": [resource_id],
                 "status": rec.get("status").lower(),
                 "timestamp": datetime.utcnow().isoformat() + "Z",
@@ -43,6 +47,10 @@ async def generate_alerts_from_resources() -> List[Dict[str, Any]]:
                 "saving": rec.get("saving", "N/A"),
                 "resource_type": resource.get("type"),
                 "region": resource.get("region"),
+                # Tags from the underlying resource — surface them so the
+                # correlation engine can group by shared business context
+                # (Service, Owner, Environment, Application, etc.).
+                "tags": resource.get("tags") or {},
                 "solution_steps": rec.get("solution_steps")
             }
 
