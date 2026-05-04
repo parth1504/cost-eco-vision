@@ -3,10 +3,13 @@ from .s3_logic import generate_s3_recommendations
 from .dynamodb_logic import generate_dynamodb_recommendations
 
 def generateRecommendations(resource):
-    if resource["type"] == "EC2":
+    rtype = resource.get("type")
+
+    if rtype == "EC2":
         return generate_ec2_recommendations(resource)
-    elif resource["type"] == "S3":
+    elif rtype == "S3":
         return generate_s3_recommendations(resource)
-    elif resource["type"] == "DynamoDB":
+    elif rtype == "DynamoDB":
         return generate_dynamodb_recommendations(resource)
+
     return []

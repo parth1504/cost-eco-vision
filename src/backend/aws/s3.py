@@ -2,6 +2,8 @@ from connections.aws import get_client, get_region
 from connections.db import get_resource_from_db, save_resource_in_db
 from connections.db import get_resource_from_db, save_resource_in_db
 from aws.util import replace_placeholders, get_resource_cost
+from aws.util import should_run_agent
+from backend.agent.analyzer_agent.main import generateRecommendations
 
 from datetime import datetime, timedelta
 aws_region = get_region()
@@ -9,24 +11,6 @@ aws_region = get_region()
 
 s3 = get_client("s3")
 cloudwatch = get_client("cloudwatch")
-def replace_placeholders(obj, mapping):
-    """
-    Recursively replace placeholders like {INSTANCE_ID} in strings,
-    lists, and nested dictionaries.
-    """
-    if isinstance(obj, str):
-        for key, value in mapping.items():  
-            obj = obj.replace(f"{{{key}}}", value)
-        return obj
-
-    elif isinstance(obj, list):
-        return [replace_placeholders(item, mapping) for item in obj]
-
-    elif isinstance(obj, dict):
-        return {k: replace_placeholders(v, mapping) for k, v in obj.items()}
-
-    else:
-        return obj
 
 s3_recommendations = [
     # {
@@ -183,6 +167,51 @@ s3_recommendations = [
     # }
 ]
 
+
+async def list_s3_buckets():
+    """Fetch all S3 buckets and enrich with DynamoDB-backed state."""
+    try:
+
+        response = s3.list_buckets()
+        buckets = []
+
+        for bucket in response.get("Buckets", []):
+            name = bucket.get("Name")
+
+            db_item = get_resource_from_db(name, "S3")
+
+            if db_item:
+
+                bucket_data=db_item
+                bucket_data["resource_id"] = name
+
+                last_run= bucket_data.get("last_agent_run")
+                print(f"Bucket {name} last agent run: {last_run}")
+                if should_run_agent(last_run):
+                    recommendations = generateRecommendations(bucket_data)
+                    bucket_data["recommendations"] = recommendations
+                    bucket_data["last_agent_run"] = datetime.utcnow().isoformat()
+
+                    save_resource_in_db(name, "S3", bucket_data)
+
+                
+            else:
+                bucket_data=build_s3_resource(bucket)
+                
+                print(f"Built S3 resource data for {name}: {bucket_data}")
+                print("-------------------------------------------------------------------------")
+                recommendations=generateRecommendations(bucket_data)
+                bucket_data["recommendations"]=recommendations
+            saved=save_resource_in_db(name, "S3", bucket_data)
+
+            buckets.append(bucket_data)
+
+        return buckets
+
+    except Exception as e:
+        print(f"Error in list_s3_buckets: {e}")
+        return []
+
 def get_bucket_storage_utilization(bucket_name, region="us-east-1"):
     """Return % of data in S3 Standard storage class (or fallback utilization)."""
 
@@ -220,57 +249,73 @@ def get_bucket_storage_utilization(bucket_name, region="us-east-1"):
         print(f"Failed to fetch S3 utilization for {bucket_name}: {e}")
         return 0
 
-async def list_s3_buckets():
-    """Fetch all S3 buckets and enrich with DynamoDB-backed state."""
+def build_s3_resource(bucket, s3_client):
+    name = bucket.get("Name")
+
+    return {
+        "resource_id": name,
+        "name": name,
+        "type": "S3",
+        "status": "available",
+        "region": get_region(),
+        "provider": "AWS",
+
+        "metrics": get_s3_metrics(name),
+        "config": get_s3_config(name, s3_client),
+
+        "monthly_cost": get_resource_cost("BucketName", name),
+
+        "metadata": {
+            "creation_date": bucket.get("CreationDate").isoformat()
+            if bucket.get("CreationDate") else None
+        },
+
+        "is_optimized": False,
+        "last_agent_run": datetime.utcnow().isoformat()
+    }
+
+
+def get_s3_metrics(bucket_name):
+    utilization = get_bucket_storage_utilization(bucket_name, get_region())
+
+    return {
+        "storage_bytes": utilization.get("size_bytes") if utilization else None,
+        "object_count": utilization.get("object_count") if utilization else None
+    }
+
+def get_s3_config(bucket_name, s3_client):
+    # Public access
     try:
+        pab = s3_client.get_public_access_block(Bucket=bucket_name)
+        public_block = pab["PublicAccessBlockConfiguration"]
+        public_access_blocked = all(public_block.values())
+    except Exception:
+        public_access_blocked = False
 
-        response = s3.list_buckets()
-        buckets = []
+    # Encryption
+    try:
+        s3_client.get_bucket_encryption(Bucket=bucket_name)
+        encryption_enabled = True
+    except Exception:
+        encryption_enabled = False
 
-        for bucket in response.get("Buckets", []):
-            name = bucket.get("Name")
+    # Versioning
+    try:
+        versioning = s3_client.get_bucket_versioning(Bucket=bucket_name)
+        versioning_enabled = versioning.get("Status") == "Enabled"
+    except Exception:
+        versioning_enabled = False
 
-            db_item = get_resource_from_db(name, "S3")
+    # Policy
+    try:
+        s3_client.get_bucket_policy(Bucket=bucket_name)
+        has_policy = True
+    except Exception:
+        has_policy = False
 
-            if db_item:
-                bucket_data=db_item
-                
-            else:
-                creation_date = bucket.get("CreationDate")
-
-                try:
-                    loc = s3.get_bucket_location(Bucket=name).get("LocationConstraint")
-                    region = loc if loc else aws_region
-                except Exception:
-                    region = aws_region
-
-                utilization = get_bucket_storage_utilization(name, region)
-                cost = get_resource_cost("BucketName", name)
-
-                bucket_data = {
-                    "resource_id": name,
-                    "name": name,
-                    "type": "S3",
-                    "status": "available",
-                    "utilization": utilization,
-                    "monthly_cost": cost,
-                    "region": region,
-                    "provider": "AWS",
-                    "last_agent_run": datetime.utcnow().isoformat(),
-                    "creation_date": creation_date,
-
-                    "is_optimized": False,
-                    "recommendations": replace_placeholders(
-                        s3_recommendations,
-                        {"BUCKET_NAME": name}
-                    )
-                }
-                save_resource_in_db(name, "S3", bucket_data)
-
-            buckets.append(bucket_data)
-
-        return buckets
-
-    except Exception as e:
-        print(f"Error in list_s3_buckets: {e}")
-        return []
+    return {
+        "public_access_blocked": public_access_blocked,
+        "encryption_enabled": encryption_enabled,
+        "versioning_enabled": versioning_enabled,
+        "has_bucket_policy": has_policy
+    }

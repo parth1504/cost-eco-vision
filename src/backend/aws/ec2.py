@@ -1,4 +1,4 @@
-from connections.aws import get_client
+from connections.aws import get_client, get_region
 from connections.db import get_resource_from_db, save_resource_in_db
 from aws.util import  get_resource_cost, should_run_agent
 from datetime import datetime, timedelta
@@ -111,7 +111,6 @@ async def list_ec2_instances():
                 
                 # --- CHECK DYNAMODB ---
                 db_item = get_resource_from_db(instance_id, "EC2")
-                print(f"Checking DB for EC2 {instance_id}: {'Found' if db_item else 'Not Found'}")
                 if db_item:
                     instance_data = db_item
                     instance_data["resource_id"] = instance_id
@@ -146,7 +145,7 @@ def build_ec2_resource(instance):
     instance_id = instance.get("InstanceId")
     state = instance.get("State", {}).get("Name", "unknown")
     instance_type = instance.get("InstanceType", "unknown")
-    region = ec2.meta.region_name
+    region = get_region()
     launch_time = instance.get("LaunchTime")
     name_tag = next(
         (tag["Value"] for tag in instance.get("Tags", []) if tag["Key"] == "Name"),

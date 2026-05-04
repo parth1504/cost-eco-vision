@@ -1,7 +1,12 @@
+from os import name
+
+from backend.agent.analyzer_agent.main import generateRecommendations
 from connections.db import get_resource_from_db, save_resource_in_db
 from datetime import datetime, timedelta
-from aws.util import replace_placeholders, get_resource_cost
-from connections.aws import get_client
+from aws.util import replace_placeholders, get_resource_cost, should_run_agent
+from connections.aws import get_client, get_region
+from backend.agent.analyzer_agent.main import generateRecommendations
+
 
 dynamodb = get_client("dynamodb")
 cloudwatch = get_client("cloudwatch")
@@ -194,44 +199,25 @@ async def list_dynamodb_tables():
 
             if db_item:
                 table_data=db_item
+                table_data["resource_id"] = name
+                last_run= table_data.get("last_agent_run")
+                print(f"DynamoDB Table {name} last agent run: {last_run}")
+                if should_run_agent(last_run):
+                    recommendations = generateRecommendations(table_data)
+                    table_data["recommendations"] = recommendations
+                    table_data["last_agent_run"] = datetime.utcnow().isoformat()
+
+                    save_resource_in_db(name, "DynamoDB", table_data)
             else:
-                try:
-                    desc = dynamodb.describe_table(TableName=name).get("Table", {})
-                except Exception as e:
-                    print(f"Failed to describe DynamoDB table {name}: {e}")
-                    desc = {}
+                
 
-                item_count = desc.get("ItemCount")
-                size_bytes = desc.get("TableSizeBytes")
-                status = desc.get("TableStatus", "UNKNOWN")
-                launch_time = desc.get("LaunchTime")
-                creation = desc.get("CreationDateTime")
-                region = dynamodb.meta.region_name
-
-                utilization = get_consumed_read_write_capacity(name, region)
-                cost = get_resource_cost("TableName", name)
-
-                table_data = {
-                    "resource_id": name,
-                    "name": name,
-                    "type": "DynamoDB",
-                    "status": status.lower(),
-                    "utilization": utilization,
-                    "monthly_cost": cost,
-                    "region": region,
-                    "provider": "AWS",
-                    "is_optimized": False,
-                    "item_count": item_count,
-                    "table_size_bytes": size_bytes,
-                    "last_agent_run": datetime.utcnow().isoformat(),
-                    "creation_date": launch_time.isoformat() if launch_time else None,
-                    "recommendations": replace_placeholders(
-                        dynamodb_recommendations,
-                        {"TABLE_NAME": name}
-                    )
-                }
-
-                save_resource_in_db(name, "DynamoDB", table_data)
+                desc= dynamodb.describe_table(TableName=name)["Table"]
+                table_data=build_dynamodb_resource(desc,name)
+                print(f"Built DynamoDB resource data for {name}: {table_data}")
+                print("-------------------------------------------------------------------------")
+                recommendations=generateRecommendations(table_data)
+                table_data["recommendations"]=recommendations
+                saved=save_resource_in_db(name, "DynamoDB", table_data)
 
             tables.append(table_data)
 
@@ -290,4 +276,74 @@ def get_consumed_read_write_capacity(table_name, region="us-east-1"):
         print(f"Failed to get DynamoDB capacity for {table_name}: {e}")
         return 0
 
- 
+from datetime import datetime
+
+def build_dynamodb_resource(desc, name):
+    region = get_region()
+
+    return {
+        "resource_id": name,
+        "name": name,
+        "type": "DynamoDB",
+        "status": desc.get("TableStatus", "UNKNOWN").lower(),
+        "region": region,
+        "provider": "AWS",
+
+        # 👇 structured for agent
+        "metrics": get_dynamodb_metrics(name, region),
+        "config": get_dynamodb_config(desc, name),
+
+        "monthly_cost": get_resource_cost("TableName", name),
+
+        "metadata": {
+            "creation_date": desc.get("CreationDateTime").isoformat()
+            if desc.get("CreationDateTime") else None,
+            "item_count": desc.get("ItemCount"),
+            "table_size_bytes": desc.get("TableSizeBytes")
+        },
+
+        "is_optimized": False,
+        "last_agent_run": datetime.utcnow().isoformat()
+    }
+
+def get_dynamodb_metrics(table_name, region):
+    utilization = get_consumed_read_write_capacity(table_name, region)
+
+    if not utilization:
+        return {}
+
+    return {
+        "read_capacity_used": utilization.get("read_capacity"),
+        "write_capacity_used": utilization.get("write_capacity"),
+    }
+
+def get_dynamodb_config(desc, table_name):
+    # ------------------------
+    # PITR (Point-in-Time Recovery)
+    # ------------------------
+    try:
+        pitr = dynamodb.describe_continuous_backups(
+            TableName=table_name
+        )
+        pitr_enabled = pitr["ContinuousBackupsDescription"] \
+            .get("PointInTimeRecoveryDescription", {}) \
+            .get("PointInTimeRecoveryStatus") == "ENABLED"
+    except Exception:
+        pitr_enabled = False
+
+    # ------------------------
+    # Encryption
+    # ------------------------
+    sse_desc = desc.get("SSEDescription", {})
+    encryption_enabled = sse_desc.get("Status") == "ENABLED"
+
+    # ------------------------
+    # Billing mode
+    # ------------------------
+    billing_mode = desc.get("BillingModeSummary", {}).get("BillingMode", "PROVISIONED")
+
+    return {
+        "pitr_enabled": pitr_enabled,
+        "encryption_enabled": encryption_enabled,
+        "billing_mode": billing_mode
+    }
