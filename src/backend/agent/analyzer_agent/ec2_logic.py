@@ -1,6 +1,13 @@
+import logging
+
+# Initialize logger
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
 from agent.llm.llm_client import get_llm_client
 
 def generate_ec2_recommendations(resource):
+    logger.info("Generating EC2 recommendations for resource: %s", resource)
     from datetime import datetime, timedelta
 
     recommendations = []
@@ -250,4 +257,5 @@ def generate_ec2_recommendations(resource):
             }
         })
 
+    logger.info("Finished generating EC2 recommendations")
     return recommendations

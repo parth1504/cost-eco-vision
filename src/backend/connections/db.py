@@ -43,8 +43,14 @@ def save_resource_in_db(resource_id, resource_type, resource_data):
         "region": resource_data.get("region"),
         "recommendations": resource_data.get("recommendations"),
         "last_checked_time": datetime.utcnow().isoformat(),
-        "cooldown_seconds": 86400,
         "is_optimized": resource_data.get("is_optimized"),
+        "last_agent_run": resource_data.get("last_agent_run"),
+        "config": resource_data.get("config"),
+        "metrics": resource_data.get("metrics"),
+        "name": resource_data.get("name"),
+        
+
+
     }
 
     item = convert_floats(item)

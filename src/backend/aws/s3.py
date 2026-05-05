@@ -3,7 +3,7 @@ from connections.db import get_resource_from_db, save_resource_in_db
 from connections.db import get_resource_from_db, save_resource_in_db
 from aws.util import replace_placeholders, get_resource_cost
 from aws.util import should_run_agent
-from backend.agent.analyzer_agent.main import generateRecommendations
+from agent.analyzer_agent.main import generateRecommendations
 
 from datetime import datetime, timedelta
 aws_region = get_region()
@@ -187,6 +187,8 @@ async def list_s3_buckets():
 
                 last_run= bucket_data.get("last_agent_run")
                 print(f"Bucket {name} last agent run: {last_run}")
+                print(f"Bucket {name} - should run agent? {should_run_agent(last_run)}")
+
                 if should_run_agent(last_run):
                     recommendations = generateRecommendations(bucket_data)
                     bucket_data["recommendations"] = recommendations
@@ -198,11 +200,9 @@ async def list_s3_buckets():
             else:
                 bucket_data=build_s3_resource(bucket)
                 
-                print(f"Built S3 resource data for {name}: {bucket_data}")
-                print("-------------------------------------------------------------------------")
                 recommendations=generateRecommendations(bucket_data)
                 bucket_data["recommendations"]=recommendations
-            saved=save_resource_in_db(name, "S3", bucket_data)
+                saved=save_resource_in_db(name, "S3", bucket_data)
 
             buckets.append(bucket_data)
 
@@ -249,7 +249,7 @@ def get_bucket_storage_utilization(bucket_name, region="us-east-1"):
         print(f"Failed to fetch S3 utilization for {bucket_name}: {e}")
         return 0
 
-def build_s3_resource(bucket, s3_client):
+def build_s3_resource(bucket):
     name = bucket.get("Name")
 
     return {
@@ -261,7 +261,7 @@ def build_s3_resource(bucket, s3_client):
         "provider": "AWS",
 
         "metrics": get_s3_metrics(name),
-        "config": get_s3_config(name, s3_client),
+        "config": get_s3_config(name),
 
         "monthly_cost": get_resource_cost("BucketName", name),
 
@@ -283,10 +283,10 @@ def get_s3_metrics(bucket_name):
         "object_count": utilization.get("object_count") if utilization else None
     }
 
-def get_s3_config(bucket_name, s3_client):
+def get_s3_config(bucket_name):
     # Public access
     try:
-        pab = s3_client.get_public_access_block(Bucket=bucket_name)
+        pab = s3.get_public_access_block(Bucket=bucket_name)
         public_block = pab["PublicAccessBlockConfiguration"]
         public_access_blocked = all(public_block.values())
     except Exception:
@@ -294,21 +294,21 @@ def get_s3_config(bucket_name, s3_client):
 
     # Encryption
     try:
-        s3_client.get_bucket_encryption(Bucket=bucket_name)
+        s3.get_bucket_encryption(Bucket=bucket_name)
         encryption_enabled = True
     except Exception:
         encryption_enabled = False
 
     # Versioning
     try:
-        versioning = s3_client.get_bucket_versioning(Bucket=bucket_name)
+        versioning = s3.get_bucket_versioning(Bucket=bucket_name)
         versioning_enabled = versioning.get("Status") == "Enabled"
     except Exception:
         versioning_enabled = False
 
     # Policy
     try:
-        s3_client.get_bucket_policy(Bucket=bucket_name)
+        s3.get_bucket_policy(Bucket=bucket_name)
         has_policy = True
     except Exception:
         has_policy = False

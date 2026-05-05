@@ -103,7 +103,6 @@ async def list_ec2_instances():
         response = ec2.describe_instances()
         instances = []
         
-        print(f"Found {len(response.get('Reservations', []))} EC2 reservations")
         for reservation in response.get("Reservations", []):
             for instance in reservation.get("Instances", []):
 
@@ -126,12 +125,10 @@ async def list_ec2_instances():
                         save_resource_in_db(instance_id, "EC2", instance_data)
                 else:
                     instance_data=build_ec2_resource(instance)
-                    print(f"Built EC2 resource data for {instance_id}: {instance_data}")
-                    print("-------------------------------------------------------------------------")
                     recommendations=generateRecommendations(instance_data)
                     instance_data["recommendations"]=recommendations
 
-                    saved = save_resource_in_db(instance_id, "EC2", instance_data)
+                    saved = save_resource_in_db(instance_data["name"], "EC2", instance_data)
 
                 instances.append(instance_data)
 

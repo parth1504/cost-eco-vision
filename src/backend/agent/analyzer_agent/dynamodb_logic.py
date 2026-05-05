@@ -1,7 +1,14 @@
+import logging
+
+# Initialize logger
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
 from typing import Dict, Any, List, Optional
 from agent.llm.llm_client import get_llm_client
 
 def generate_dynamodb_recommendations(resource):
+    logger.info("Generating DynamoDB recommendations for resource: %s", resource)
     from datetime import datetime, timedelta
 
     recommendations = []
@@ -244,4 +251,5 @@ def generate_dynamodb_recommendations(resource):
             }
         })
 
+    logger.info("Finished generating DynamoDB recommendations")
     return recommendations

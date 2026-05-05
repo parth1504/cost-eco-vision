@@ -24,7 +24,6 @@ async def generate_alerts_from_resources() -> List[Dict[str, Any]]:
     alerts = []
     
     resources = await get_all_resources()   # fetch EC2 + S3 + Dynamo + others
-    print(f"Generating alerts from {len(resources)} resources")
     for resource in resources:
         resource_id = resource.get("resource_id")
         recs = resource.get("recommendations", [])

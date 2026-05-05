@@ -1,12 +1,20 @@
+import logging
+
+# Initialize logger
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
 from typing import Dict, Any, List, Optional
 from agent.llm.llm_client import get_llm_client
 
 
 def _generate_description(prompt: str) -> str:
+    logger.info("Generating description for prompt: %s", prompt)
     try:
         llm = get_llm_client()
         return llm.generate(prompt)
-    except Exception:
+    except Exception as e:
+        logger.error("Error generating description: %s", e)
         return prompt
 
 
