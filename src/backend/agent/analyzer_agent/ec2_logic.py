@@ -6,27 +6,45 @@ logger.setLevel(logging.INFO)
 
 from agent.llm.llm_client import get_llm_client
 
+
 def generate_ec2_recommendations(resource):
+    """
+    Rule-based EC2 recommendation generator.
+
+    Conventions enforced here:
+      - Real instance id is inlined into boto3_sequence params (the previous
+        `"{INSTANCE_ID}"` placeholder was never substituted on the apply path
+        → Apply Fix sent the literal string to AWS and 400'd).
+      - Sizing rules use explicit precedence so contradictory recommendations
+        never fire on the same instance:
+            Idle ≻ Overutilized ≻ Bursty ≻ Underutilized
+        Health and "missing detailed monitoring" are independent and always
+        evaluated.
+      - "Bursty" recommends Auto Scaling but our boto3 sequence for it is a
+        stub (empty params). It's marked `manual_only: True` so Apply Fix
+        won't try to run it.
+    """
     logger.info("Generating EC2 recommendations for resource: %s", resource)
     from datetime import datetime, timedelta
 
     recommendations = []
 
     # --- Extract values safely ---
-    metrics = resource.get("metrics", {})
-    cpu = metrics.get("cpu", {})
-    network = metrics.get("network", {})
-    health = metrics.get("health", {})
-    config = resource.get("config", {})
+    metrics = resource.get("metrics", {}) or {}
+    cpu = metrics.get("cpu", {}) or {}
+    network = metrics.get("network", {}) or {}
+    health = metrics.get("health", {}) or {}
+    config = resource.get("config", {}) or {}
 
     cpu_avg = cpu.get("avg_7d")
     cpu_max = cpu.get("max_7d")
-    net_in = network.get("in_avg_7d", 0)
-    net_out = network.get("out_avg_7d", 0)
-    net_total = (net_in or 0) + (net_out or 0)
+    net_in = network.get("in_avg_7d", 0) or 0
+    net_out = network.get("out_avg_7d", 0) or 0
+    net_total = net_in + net_out
 
     instance_type = config.get("instance_type", "")
-    instance_id = "{INSTANCE_ID}"
+    # Use the real instance id, not a placeholder.
+    instance_id = resource.get("resource_id") or resource.get("name") or ""
 
     # --- Safety Guards ---
     if cpu_avg is None or cpu_max is None:
@@ -41,21 +59,23 @@ def generate_ec2_recommendations(resource):
         except Exception:
             pass
 
-    if instance_type in ["t3.micro", "t2.micro"]:
-        skip_small_instance = True
-    else:
-        skip_small_instance = False
+    skip_small_instance = instance_type in ("t3.micro", "t2.micro")
 
     llm = get_llm_client()
 
-    # --- RULE 3: IDLE INSTANCE ---
-    if cpu_avg < 5 and net_total < 10:
-        confidence = min(1.0, 0.5 + 0.3 + 0.2)
+    # ------------------------------------------------------------------
+    # SIZING RULES — apply explicit precedence so we emit at most one
+    # size-related recommendation per instance.
+    # ------------------------------------------------------------------
+    size_decision_made = False
 
+    # RULE: IDLE INSTANCE — strongest signal (suppresses Underutilized,
+    # Bursty, and Overutilized).
+    if cpu_avg < 5 and net_total < 10:
+        size_decision_made = True
         description = llm.generate(
             f"Explain why an EC2 instance with CPU avg {cpu_avg}% and near-zero network usage should be stopped to save cost."
         )
-
         recommendations.append({
             "title": "Idle Instance Detected — Stop Instance",
             "description": description,
@@ -68,120 +88,32 @@ def generate_ec2_recommendations(resource):
             "solution_steps": [
                 {
                     "step": 1,
-                    "command": "aws ec2 stop-instances --instance-ids {INSTANCE_ID}",
-                    "description": "Stop the EC2 instance to eliminate unnecessary cost."
+                    "command": f"aws ec2 stop-instances --instance-ids {instance_id}",
+                    "description": "Stop the EC2 instance to eliminate unnecessary cost.",
                 }
             ],
             "boto3_sequence": [
                 {
                     "service": "ec2",
                     "operation": "stop_instances",
-                    "params": {"InstanceIds": [instance_id]}
+                    "params": {"InstanceIds": [instance_id]},
                 }
             ],
-            "confidence": confidence,
+            "confidence": 0.95,
             "reasoning": {
                 "cpu_avg": cpu_avg,
                 "cpu_max": cpu_max,
                 "network": net_total,
-                "decision": "Idle instance detected"
-            }
+                "decision": "Idle instance detected",
+            },
         })
 
-    # --- RULE 2: BURSTY WORKLOAD ---
-    if cpu_avg < 20 and cpu_max > 70:
-        confidence = min(1.0, 0.4 + 0.4)
-
-        description = llm.generate(
-            f"Explain why an EC2 instance with low average CPU ({cpu_avg}%) but high peak ({cpu_max}%) should use autoscaling."
-        )
-
-        recommendations.append({
-            "title": "Bursty Workload Detected — Use Auto Scaling",
-            "description": description,
-            "type": "performance",
-            "severity": "medium",
-            "saving": "N/A",
-            "issue": "CPU spikes detected despite low average usage",
-            "impact": "medium",
-            "status": "active",
-            "solution_steps": [
-                {
-                    "step": 1,
-                    "command": "Configure Auto Scaling Group",
-                    "description": "Set up auto scaling to handle workload spikes dynamically."
-                }
-            ],
-            "boto3_sequence": [
-                {
-                    "service": "autoscaling",
-                    "operation": "create_auto_scaling_group",
-                    "params": {}
-                }
-            ],
-            "confidence": confidence,
-            "reasoning": {
-                "cpu_avg": cpu_avg,
-                "cpu_max": cpu_max,
-                "network": net_total,
-                "decision": "Bursty workload detected"
-            }
-        })
-
-    # --- RULE 1: UNDERUTILIZED ---
-    if cpu_avg < 20 and cpu_max < 50 and net_total < 100:
-        if cpu_max > 70 or skip_small_instance:
-            pass
-        else:
-            confidence = min(1.0, 0.4 + 0.3 + 0.3)
-
-            description = llm.generate(
-                f"Explain why an EC2 instance with low CPU avg {cpu_avg}% and low peak {cpu_max}% should be downsized."
-            )
-
-            recommendations.append({
-                "title": "Underutilized Instance — Downsize",
-                "description": description,
-                "type": "cost",
-                "severity": "warning",
-                "saving": round(resource.get("monthly_cost", 0) * 0.3, 2),
-                "issue": "Low CPU and network utilization",
-                "impact": "medium",
-                "status": "active",
-                "solution_steps": [
-                    {
-                        "step": 1,
-                        "command": "aws ec2 modify-instance-attribute --instance-id {INSTANCE_ID} --instance-type t3.micro",
-                        "description": "Change instance type to smaller size."
-                    }
-                ],
-                "boto3_sequence": [
-                    {
-                        "service": "ec2",
-                        "operation": "modify_instance_attribute",
-                        "params": {
-                            "InstanceId": instance_id,
-                            "InstanceType": {"Value": "t3.micro"}
-                        }
-                    }
-                ],
-                "confidence": confidence,
-                "reasoning": {
-                    "cpu_avg": cpu_avg,
-                    "cpu_max": cpu_max,
-                    "network": net_total,
-                    "decision": "Underutilized instance"
-                }
-            })
-
-    # --- RULE 4: OVERUTILIZED ---
-    if cpu_max > 80:
-        confidence = min(1.0, 0.5 + 0.3)
-
+    # RULE: OVERUTILIZED — only if not Idle.
+    if not size_decision_made and cpu_max > 80:
+        size_decision_made = True
         description = llm.generate(
             f"Explain why an EC2 instance with CPU peak {cpu_max}% should be scaled up."
         )
-
         recommendations.append({
             "title": "Overutilized Instance — Scale Up",
             "description": description,
@@ -194,8 +126,8 @@ def generate_ec2_recommendations(resource):
             "solution_steps": [
                 {
                     "step": 1,
-                    "command": "aws ec2 modify-instance-attribute --instance-id {INSTANCE_ID} --instance-type t3.large",
-                    "description": "Upgrade instance type to handle load."
+                    "command": f"aws ec2 modify-instance-attribute --instance-id {instance_id} --instance-type t3.large",
+                    "description": "Upgrade instance type to handle load.",
                 }
             ],
             "boto3_sequence": [
@@ -204,27 +136,111 @@ def generate_ec2_recommendations(resource):
                     "operation": "modify_instance_attribute",
                     "params": {
                         "InstanceId": instance_id,
-                        "InstanceType": {"Value": "t3.large"}
-                    }
+                        "InstanceType": {"Value": "t3.large"},
+                    },
                 }
             ],
-            "confidence": confidence,
+            "confidence": 0.8,
             "reasoning": {
                 "cpu_avg": cpu_avg,
                 "cpu_max": cpu_max,
                 "network": net_total,
-                "decision": "Overutilized instance"
-            }
+                "decision": "Overutilized instance",
+            },
         })
 
-    # --- RULE 5: HEALTH ISSUE ---
-    if health.get("status_check_failed_max", 0) > 0:
-        confidence = 0.9
+    # RULE: BURSTY WORKLOAD — only if not Idle / Overutilized.
+    # Marked manual_only: ASG creation needs a launch template + min/max
+    # we can't infer, so the boto3 sequence is a stub and Apply Fix would
+    # error. The recommendation surfaces the suggestion; humans set up ASG.
+    if not size_decision_made and cpu_avg < 20 and cpu_max > 70:
+        size_decision_made = True
+        description = llm.generate(
+            f"Explain why an EC2 instance with low average CPU ({cpu_avg}%) but high peak ({cpu_max}%) should use autoscaling."
+        )
+        recommendations.append({
+            "title": "Bursty Workload Detected — Use Auto Scaling",
+            "description": description,
+            "type": "performance",
+            "severity": "medium",
+            "saving": "N/A",
+            "issue": "CPU spikes detected despite low average usage",
+            "impact": "medium",
+            "status": "active",
+            "manual_only": True,  # ASG creation needs human input
+            "solution_steps": [
+                {
+                    "step": 1,
+                    "command": "Configure Auto Scaling Group manually",
+                    "description": "Set up auto scaling to handle workload spikes dynamically.",
+                }
+            ],
+            "boto3_sequence": [],
+            "confidence": 0.7,
+            "reasoning": {
+                "cpu_avg": cpu_avg,
+                "cpu_max": cpu_max,
+                "network": net_total,
+                "decision": "Bursty workload detected",
+            },
+        })
 
+    # RULE: UNDERUTILIZED — weakest sizing signal, only if nothing stronger.
+    if (
+        not size_decision_made
+        and cpu_avg < 20
+        and cpu_max < 50
+        and net_total < 100
+        and not skip_small_instance
+    ):
+        size_decision_made = True
+        description = llm.generate(
+            f"Explain why an EC2 instance with low CPU avg {cpu_avg}% and low peak {cpu_max}% should be downsized."
+        )
+        recommendations.append({
+            "title": "Underutilized Instance — Downsize",
+            "description": description,
+            "type": "cost",
+            "severity": "warning",
+            "saving": round(resource.get("monthly_cost", 0) * 0.3, 2),
+            "issue": "Low CPU and network utilization",
+            "impact": "medium",
+            "status": "active",
+            "solution_steps": [
+                {
+                    "step": 1,
+                    "command": f"aws ec2 modify-instance-attribute --instance-id {instance_id} --instance-type t3.micro",
+                    "description": "Change instance type to smaller size.",
+                }
+            ],
+            "boto3_sequence": [
+                {
+                    "service": "ec2",
+                    "operation": "modify_instance_attribute",
+                    "params": {
+                        "InstanceId": instance_id,
+                        "InstanceType": {"Value": "t3.micro"},
+                    },
+                }
+            ],
+            "confidence": 0.7,
+            "reasoning": {
+                "cpu_avg": cpu_avg,
+                "cpu_max": cpu_max,
+                "network": net_total,
+                "decision": "Underutilized instance",
+            },
+        })
+
+    # ------------------------------------------------------------------
+    # INDEPENDENT RULES — health, monitoring; always evaluated.
+    # ------------------------------------------------------------------
+
+    # RULE: HEALTH ISSUE
+    if health.get("status_check_failed_max", 0) > 0:
         description = llm.generate(
             "Explain why an EC2 instance with failed health checks should be restarted."
         )
-
         recommendations.append({
             "title": "Instance Health Issue — Restart Recommended",
             "description": description,
@@ -237,24 +253,24 @@ def generate_ec2_recommendations(resource):
             "solution_steps": [
                 {
                     "step": 1,
-                    "command": "aws ec2 reboot-instances --instance-ids {INSTANCE_ID}",
-                    "description": "Reboot instance to recover from failure."
+                    "command": f"aws ec2 reboot-instances --instance-ids {instance_id}",
+                    "description": "Reboot instance to recover from failure.",
                 }
             ],
             "boto3_sequence": [
                 {
                     "service": "ec2",
                     "operation": "reboot_instances",
-                    "params": {"InstanceIds": [instance_id]}
+                    "params": {"InstanceIds": [instance_id]},
                 }
             ],
-            "confidence": confidence,
+            "confidence": 0.9,
             "reasoning": {
                 "cpu_avg": cpu_avg,
                 "cpu_max": cpu_max,
                 "network": net_total,
-                "decision": "Health issue detected"
-            }
+                "decision": "Health issue detected",
+            },
         })
 
     logger.info("Finished generating EC2 recommendations")

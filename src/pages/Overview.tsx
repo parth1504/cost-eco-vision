@@ -492,18 +492,20 @@ export function Overview() {
                 <div className="flex space-x-3">
                   {selectedAlert.status !== 'Resolved' ? (
                     <>
+                      {!(selectedAlert as any).manual_only && (
+                        <Button
+                          onClick={() => handleApplyFix(selectedAlert.id)}
+                          className="flex-1 action-success"
+                        >
+                          Apply Fix
+                        </Button>
+                      )}
                       <Button
-                        onClick={() => handleApplyFix(selectedAlert.id)}
-                        className="flex-1 action-success"
-                      >
-                        Apply Fix
-                      </Button>
-                      <Button 
-                        variant="outline" 
+                        variant="outline"
                         className="flex-1"
                         onClick={() => handleDismiss(selectedAlert.id)}
                       >
-                        Dismiss
+                        {(selectedAlert as any).manual_only ? "Acknowledge" : "Dismiss"}
                       </Button>
                     </>
                   ) : (

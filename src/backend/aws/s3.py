@@ -213,41 +213,46 @@ async def list_s3_buckets():
         return []
 
 def get_bucket_storage_utilization(bucket_name, region="us-east-1"):
-    """Return % of data in S3 Standard storage class (or fallback utilization)."""
-
+    """
+    Return S3 storage stats as a dict:
+      {
+        "size_bytes": <int>,           # total Standard storage bytes
+        "object_count": <int|None>,    # not currently fetched (would require ListObjectsV2)
+        "utilization_percent": <float> # against an assumed 100GB cap, capped at 100
+      }
+    Empty dict if unavailable.
+    """
     try:
-        # 1. Get total bucket size (in bytes)
-        total_size_metric = cloudwatch.get_metric_statistics(
+        size_metric = cloudwatch.get_metric_statistics(
             Namespace="AWS/S3",
             MetricName="BucketSizeBytes",
             Dimensions=[
                 {"Name": "BucketName", "Value": bucket_name},
-                {"Name": "StorageType", "Value": "StandardStorage"}
+                {"Name": "StorageType", "Value": "StandardStorage"},
             ],
             StartTime=datetime.utcnow() - timedelta(days=3),
             EndTime=datetime.utcnow(),
             Period=86400,
-            Statistics=["Average"]
+            Statistics=["Average"],
         )
 
-        points = total_size_metric.get("Datapoints", [])
+        points = sorted(size_metric.get("Datapoints", []), key=lambda d: d["Timestamp"])
         if not points:
-            return 0
+            return {}
 
-        standard_bytes = points[-1]["Average"]
-
-        # Fallback total storage: assume same as standard for now
-        total_bytes = standard_bytes
-
-        # Convert to % with a default capacity cap (e.g., 100 GB)
-        total_gb = total_bytes / (1024 ** 3)
+        standard_bytes = int(points[-1]["Average"])
+        total_gb = standard_bytes / (1024 ** 3)
         utilization = min((total_gb / 100) * 100, 100)
 
-        return round(utilization, 2)
+        return {
+            "size_bytes": standard_bytes,
+            "object_count": None,  # needs ListObjectsV2 — not free, skip for now
+            "utilization_percent": round(utilization, 2),
+        }
 
     except Exception as e:
         print(f"Failed to fetch S3 utilization for {bucket_name}: {e}")
-        return 0
+        return {}
 
 def build_s3_resource(bucket):
     name = bucket.get("Name")
@@ -284,29 +289,42 @@ def get_s3_metrics(bucket_name):
     }
 
 def get_s3_config(bucket_name):
-    # Public access
+    # Public access — distinguish "no PAB configured" (legitimate finding,
+    # → False) from API errors we couldn't classify (→ None / unknown).
     try:
         pab = s3.get_public_access_block(Bucket=bucket_name)
         public_block = pab["PublicAccessBlockConfiguration"]
         public_access_blocked = all(public_block.values())
+    except s3.exceptions.ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "")
+        if code == "NoSuchPublicAccessBlockConfiguration":
+            public_access_blocked = False  # legitimately not blocked
+        else:
+            public_access_blocked = None   # unknown — don't fire false-positive
     except Exception:
-        public_access_blocked = False
+        public_access_blocked = None
 
-    # Encryption
+    # Encryption — same distinction.
     try:
         s3.get_bucket_encryption(Bucket=bucket_name)
         encryption_enabled = True
+    except s3.exceptions.ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "")
+        if code == "ServerSideEncryptionConfigurationNotFoundError":
+            encryption_enabled = False  # legitimately not encrypted
+        else:
+            encryption_enabled = None
     except Exception:
-        encryption_enabled = False
+        encryption_enabled = None
 
-    # Versioning
+    # Versioning — absence of "Enabled" means it's off, that's a known state.
     try:
         versioning = s3.get_bucket_versioning(Bucket=bucket_name)
         versioning_enabled = versioning.get("Status") == "Enabled"
     except Exception:
-        versioning_enabled = False
+        versioning_enabled = None
 
-    # Policy
+    # Policy presence — boolean is fine here.
     try:
         s3.get_bucket_policy(Bucket=bucket_name)
         has_policy = True
@@ -317,5 +335,5 @@ def get_s3_config(bucket_name):
         "public_access_blocked": public_access_blocked,
         "encryption_enabled": encryption_enabled,
         "versioning_enabled": versioning_enabled,
-        "has_bucket_policy": has_policy
+        "has_bucket_policy": has_policy,
     }

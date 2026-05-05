@@ -172,8 +172,21 @@ def build_ec2_resource(instance):
         
     }
 
-def get_instance_utilization(instance_id, region="us-east-1",start_time=None,end_time=None):
-    end_time = datetime.utcnow()
+def get_instance_utilization(instance_id, region="us-east-1", start_time=None, end_time=None):
+    """
+    Return latest daily-average CPU utilization (%) over the last 7 days.
+
+    Notes:
+      - Ignores any caller-supplied window > 7 days. The previous version
+        passed instance launch_time as start_time, which on long-lived
+        instances pulled years of data and (because Datapoints are not
+        chronologically guaranteed) returned a random day's value as 'latest'.
+      - Sorts Datapoints by Timestamp before picking the last one.
+    """
+    end_time = end_time or datetime.utcnow()
+    earliest_allowed = end_time - timedelta(days=7)
+    if start_time is None or start_time < earliest_allowed:
+        start_time = earliest_allowed
 
     metrics = cloudwatch.get_metric_statistics(
         Namespace="AWS/EC2",
@@ -182,9 +195,9 @@ def get_instance_utilization(instance_id, region="us-east-1",start_time=None,end
         StartTime=start_time,
         EndTime=end_time,
         Period=86400,  # 1-day average
-        Statistics=["Average"]
+        Statistics=["Average"],
     )
-    datapoints = metrics.get("Datapoints", [])
+    datapoints = sorted(metrics.get("Datapoints", []), key=lambda d: d["Timestamp"])
     return round(datapoints[-1]["Average"], 2) if datapoints else 0.0
 
 def get_all_ec2_metrics(instance_id, cloudwatch_client):

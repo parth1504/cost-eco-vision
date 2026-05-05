@@ -51,6 +51,11 @@ async def generate_alerts_from_resources() -> List[Dict[str, Any]]:
                 # correlation engine can group by shared business context
                 # (Service, Owner, Environment, Application, etc.).
                 "tags": resource.get("tags") or {},
+                # Recommendations marked manual_only have empty / stub
+                # boto3_sequences (e.g. "create ASG with these params" needs
+                # human input). Frontend uses this to hide the Apply Fix
+                # button; backend refuses to execute even if asked.
+                "manual_only": bool(rec.get("manual_only", False)),
                 "solution_steps": rec.get("solution_steps")
             }
 
@@ -109,12 +114,19 @@ async def update_alert(alert_id: str, new_status: str):
         raise HTTPException(status_code=404, detail=f"Recommendation titled '{rec_title_raw}' not found in resource {resource_id}")
 
     # =============================
-    # 4) Execute AWS commands
+    # 4) Execute AWS commands (skip if manual_only)
     # =============================
-    boto3_commands = rec.get("boto3_sequence", [])
-
-
-    execution_results = await apply_aws_commands(boto3_commands)
+    if rec.get("manual_only"):
+        # Recommendation is informational — boto3_sequence is empty or stubbed.
+        # Update status only; skip execution entirely.
+        execution_results = [{
+            "success": True,
+            "skipped": True,
+            "reason": "manual_only recommendation — execution requires human input",
+        }]
+    else:
+        boto3_commands = rec.get("boto3_sequence", [])
+        execution_results = await apply_aws_commands(boto3_commands)
 
     # =============================
     # 5) Update recommendation status

@@ -7,26 +7,49 @@ logger.setLevel(logging.INFO)
 from typing import Dict, Any, List, Optional
 from agent.llm.llm_client import get_llm_client
 
+
 def generate_dynamodb_recommendations(resource):
+    """
+    Rule-based DynamoDB recommendation generator.
+
+    Conventions enforced here:
+      - Config booleans default to None (unknown). Rules fire only on
+        explicit `False`, so a missing/failed config check never produces a
+        spurious recommendation.
+      - Real table name is inlined into boto3_sequence params. The previous
+        `"{TABLE_NAME}"` placeholder was never substituted on the alert-apply
+        path → Apply Fix sent the literal string to AWS and 400'd.
+      - Sizing rules have precedence: Idle suppresses Underutilized
+        (subset of conditions). Overutilized is mutually-exclusive with the
+        others by its threshold so no extra gating needed.
+      - Recommendations whose boto3_sequence cannot be safely auto-applied
+        (e.g. Idle = "review and consider deletion") carry `manual_only:
+        True`; the alert handler refuses to execute them.
+    """
     logger.info("Generating DynamoDB recommendations for resource: %s", resource)
     from datetime import datetime, timedelta
 
-    recommendations = []
+    recommendations: List[Dict[str, Any]] = []
 
     # --- Extract values safely ---
-    metrics = resource.get("metrics", {})
-    config = resource.get("config", {})
-    metadata = resource.get("metadata", {})
+    metrics = resource.get("metrics", {}) or {}
+    config = resource.get("config", {}) or {}
+    metadata = resource.get("metadata", {}) or {}
 
-    read_usage = metrics.get("read_capacity_used", 0)
-    write_usage = metrics.get("write_capacity_used", 0)
+    read_usage = metrics.get("read_capacity_used", 0) or 0
+    write_usage = metrics.get("write_capacity_used", 0) or 0
 
-    pitr_enabled = config.get("pitr_enabled", True)
-    encryption_enabled = config.get("encryption_enabled", True)
+    # None = unknown. Rules check `is False` so unknown never fires.
+    pitr_enabled = config.get("pitr_enabled")
+    encryption_enabled = config.get("encryption_enabled")
     billing_mode = config.get("billing_mode", "PAY_PER_REQUEST")
+    provisioned_rcu = config.get("provisioned_rcu", 0) or 0
+    provisioned_wcu = config.get("provisioned_wcu", 0) or 0
 
-    table_name = "{TABLE_NAME}"
-    monthly_cost = resource.get("monthly_cost", 0)
+    # Use the real table name everywhere — the placeholder never got
+    # substituted on the apply path.
+    table_name = resource.get("name") or resource.get("resource_id") or ""
+    monthly_cost = resource.get("monthly_cost", 0) or 0
 
     # --- Safety: skip very new tables ---
     creation_date = metadata.get("creation_date")
@@ -40,14 +63,15 @@ def generate_dynamodb_recommendations(resource):
 
     llm = get_llm_client()
 
-    # --- RULE 1: PITR ---
-    if not pitr_enabled:
-        confidence = 0.9
+    # Track which "size" decision we've already produced so we don't emit
+    # contradictory recommendations on the same table.
+    size_decision_made = False
 
+    # --- RULE 1: PITR (independent of sizing) ---
+    if pitr_enabled is False:
         description = llm.generate(
             "Explain why enabling Point-in-Time Recovery (PITR) is critical for DynamoDB data protection."
         )
-
         recommendations.append({
             "title": "Enable Point-in-Time Recovery (PITR)",
             "description": description,
@@ -60,8 +84,8 @@ def generate_dynamodb_recommendations(resource):
             "solution_steps": [
                 {
                     "step": 1,
-                    "command": "aws dynamodb update-continuous-backups --table-name {TABLE_NAME} --point-in-time-recovery-specification PointInTimeRecoveryEnabled=true",
-                    "description": "Enable PITR for continuous backups."
+                    "command": f"aws dynamodb update-continuous-backups --table-name {table_name} --point-in-time-recovery-specification PointInTimeRecoveryEnabled=true",
+                    "description": "Enable PITR for continuous backups.",
                 }
             ],
             "boto3_sequence": [
@@ -72,26 +96,23 @@ def generate_dynamodb_recommendations(resource):
                         "TableName": table_name,
                         "PointInTimeRecoverySpecification": {
                             "PointInTimeRecoveryEnabled": True
-                        }
-                    }
+                        },
+                    },
                 }
             ],
-            "confidence": confidence,
+            "confidence": 0.9,
             "reasoning": {
                 "read_usage": read_usage,
                 "write_usage": write_usage,
-                "decision": "PITR disabled"
-            }
+                "decision": "PITR disabled",
+            },
         })
 
-    # --- RULE 2: ENCRYPTION ---
-    if not encryption_enabled:
-        confidence = 0.8
-
+    # --- RULE 2: ENCRYPTION (independent of sizing) ---
+    if encryption_enabled is False:
         description = llm.generate(
             "Explain why enabling encryption at rest is important for DynamoDB security."
         )
-
         recommendations.append({
             "title": "Enable DynamoDB Encryption",
             "description": description,
@@ -104,8 +125,8 @@ def generate_dynamodb_recommendations(resource):
             "solution_steps": [
                 {
                     "step": 1,
-                    "command": "aws dynamodb update-table --table-name {TABLE_NAME} --sse-specification Enabled=true,SSEType=KMS",
-                    "description": "Enable KMS encryption."
+                    "command": f"aws dynamodb update-table --table-name {table_name} --sse-specification Enabled=true,SSEType=KMS",
+                    "description": "Enable KMS encryption.",
                 }
             ],
             "boto3_sequence": [
@@ -116,29 +137,66 @@ def generate_dynamodb_recommendations(resource):
                         "TableName": table_name,
                         "SSESpecification": {
                             "Enabled": True,
-                            "SSEType": "KMS"
-                        }
-                    }
+                            "SSEType": "KMS",
+                        },
+                    },
                 }
             ],
-            "confidence": confidence,
+            "confidence": 0.8,
             "reasoning": {
                 "read_usage": read_usage,
                 "write_usage": write_usage,
-                "decision": "Encryption disabled"
-            }
+                "decision": "Encryption disabled",
+            },
         })
 
-    # --- RULE 3: UNDERUTILIZED PROVISIONED ---
-    if billing_mode == "PROVISIONED" and read_usage < 20 and write_usage < 20:
-        confidence = min(1.0, 0.5 + 0.3 + 0.2)
+    # --- SIZING RULES (with precedence Idle > Underutilized) ---
 
+    # RULE 5: IDLE TABLE — strongest signal, suppresses Underutilized.
+    # Marked manual_only because deletion shouldn't be auto-executed.
+    if read_usage < 1 and write_usage < 1:
+        size_decision_made = True
+        description = llm.generate(
+            "Explain why an idle DynamoDB table should be reviewed or removed to save cost."
+        )
+        recommendations.append({
+            "title": "Idle Table Detected — Review or Remove",
+            "description": description,
+            "type": "cost",
+            "severity": "medium",
+            "saving": monthly_cost,
+            "issue": "No meaningful usage detected",
+            "impact": "medium",
+            "status": "active",
+            "manual_only": True,  # deletion = human decision
+            "solution_steps": [
+                {
+                    "step": 1,
+                    "command": "Review table usage and consider deletion if not needed",
+                    "description": "Manual validation required before deletion.",
+                }
+            ],
+            "boto3_sequence": [],
+            "confidence": 0.9,
+            "reasoning": {
+                "read_usage": read_usage,
+                "write_usage": write_usage,
+                "decision": "Idle table",
+            },
+        })
+
+    # RULE 3: UNDERUTILIZED — only if Idle didn't already fire.
+    if (
+        not size_decision_made
+        and billing_mode == "PROVISIONED"
+        and read_usage < 20
+        and write_usage < 20
+    ):
+        size_decision_made = True
         estimated_saving = round(monthly_cost * 0.4, 2)
-
         description = llm.generate(
             f"Explain why a DynamoDB table with low read ({read_usage}%) and write ({write_usage}%) usage should switch to on-demand billing."
         )
-
         recommendations.append({
             "title": "Underutilized Table — Switch to On-Demand",
             "description": description,
@@ -151,8 +209,8 @@ def generate_dynamodb_recommendations(resource):
             "solution_steps": [
                 {
                     "step": 1,
-                    "command": "aws dynamodb update-table --table-name {TABLE_NAME} --billing-mode PAY_PER_REQUEST",
-                    "description": "Switch to on-demand billing mode."
+                    "command": f"aws dynamodb update-table --table-name {table_name} --billing-mode PAY_PER_REQUEST",
+                    "description": "Switch to on-demand billing mode.",
                 }
             ],
             "boto3_sequence": [
@@ -161,26 +219,29 @@ def generate_dynamodb_recommendations(resource):
                     "operation": "update_table",
                     "params": {
                         "TableName": table_name,
-                        "BillingMode": "PAY_PER_REQUEST"
-                    }
+                        "BillingMode": "PAY_PER_REQUEST",
+                    },
                 }
             ],
-            "confidence": confidence,
+            "confidence": 0.8,
             "reasoning": {
                 "read_usage": read_usage,
                 "write_usage": write_usage,
-                "decision": "Underutilized provisioned table"
-            }
+                "decision": "Underutilized provisioned table",
+            },
         })
 
-    # --- RULE 4: OVERUTILIZED ---
-    if read_usage > 80 or write_usage > 80:
-        confidence = min(1.0, 0.5 + 0.3)
+    # RULE 4: OVERUTILIZED — capacity targets computed from CURRENT
+    # provisioned units, not from the percentage (the previous version's
+    # bug treated 85% as 85 RCUs, producing nonsense scale targets).
+    if billing_mode == "PROVISIONED" and (read_usage > 80 or write_usage > 80):
+        # Use a sensible floor of 10 if we somehow have provisioned=0.
+        new_rcu = max(int((provisioned_rcu or 5) * 1.5), 10)
+        new_wcu = max(int((provisioned_wcu or 5) * 1.5), 10)
 
         description = llm.generate(
             f"Explain why a DynamoDB table with high usage (read {read_usage}%, write {write_usage}%) needs scaling."
         )
-
         recommendations.append({
             "title": "Overutilized Table — Scale Capacity",
             "description": description,
@@ -193,8 +254,8 @@ def generate_dynamodb_recommendations(resource):
             "solution_steps": [
                 {
                     "step": 1,
-                    "command": "aws dynamodb update-table --table-name {TABLE_NAME} --provisioned-throughput ReadCapacityUnits=...,WriteCapacityUnits=...",
-                    "description": "Increase provisioned capacity."
+                    "command": f"aws dynamodb update-table --table-name {table_name} --provisioned-throughput ReadCapacityUnits={new_rcu},WriteCapacityUnits={new_wcu}",
+                    "description": f"Increase provisioned capacity to RCU={new_rcu}, WCU={new_wcu} (1.5× current).",
                 }
             ],
             "boto3_sequence": [
@@ -204,51 +265,20 @@ def generate_dynamodb_recommendations(resource):
                     "params": {
                         "TableName": table_name,
                         "ProvisionedThroughput": {
-                            "ReadCapacityUnits": int(read_usage * 1.5) or 10,
-                            "WriteCapacityUnits": int(write_usage * 1.5) or 10
-                        }
-                    }
+                            "ReadCapacityUnits": new_rcu,
+                            "WriteCapacityUnits": new_wcu,
+                        },
+                    },
                 }
             ],
-            "confidence": confidence,
+            "confidence": 0.8,
             "reasoning": {
                 "read_usage": read_usage,
                 "write_usage": write_usage,
-                "decision": "Overutilized table"
-            }
-        })
-
-    # --- RULE 5: IDLE TABLE ---
-    if read_usage < 1 and write_usage < 1:
-        confidence = min(1.0, 0.6 + 0.3)
-
-        description = llm.generate(
-            "Explain why an idle DynamoDB table should be reviewed or removed to save cost."
-        )
-
-        recommendations.append({
-            "title": "Idle Table Detected — Review or Remove",
-            "description": description,
-            "type": "cost",
-            "severity": "medium",
-            "saving": monthly_cost,
-            "issue": "No meaningful usage detected",
-            "impact": "medium",
-            "status": "active",
-            "solution_steps": [
-                {
-                    "step": 1,
-                    "command": "Review table usage and consider deletion if not needed",
-                    "description": "Manual validation required before deletion."
-                }
-            ],
-            "boto3_sequence": [],
-            "confidence": confidence,
-            "reasoning": {
-                "read_usage": read_usage,
-                "write_usage": write_usage,
-                "decision": "Idle table"
-            }
+                "current_rcu": provisioned_rcu,
+                "current_wcu": provisioned_wcu,
+                "decision": "Overutilized table",
+            },
         })
 
     logger.info("Finished generating DynamoDB recommendations")

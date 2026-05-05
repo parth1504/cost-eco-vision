@@ -522,18 +522,20 @@ const handleApplyFix = async (alertId: string) => {
                 <div className="flex space-x-3">
                   {selectedAlert.status !== 'Resolved' ? (
                     <>
+                      {!(selectedAlert as any).manual_only && (
+                        <Button
+                          onClick={() => handleApplyFix(selectedAlert.id)}
+                          className="flex-1 action-success"
+                        >
+                          Apply Fix
+                        </Button>
+                      )}
                       <Button
-                        onClick={() => handleApplyFix(selectedAlert.id)}
-                        className="flex-1 action-success"
-                      >
-                        Apply Fix
-                      </Button>
-                      <Button 
-                        variant="outline" 
+                        variant="outline"
                         className="flex-1"
                         onClick={() => handleDismiss(selectedAlert.id)}
                       >
-                        Dismiss
+                        {(selectedAlert as any).manual_only ? "Acknowledge" : "Dismiss"}
                       </Button>
                     </>
                   ) : (
@@ -543,6 +545,12 @@ const handleApplyFix = async (alertId: string) => {
                     </div>
                   )}
                 </div>
+                {(selectedAlert as any).manual_only && selectedAlert.status !== 'Resolved' && (
+                  <p className="text-xs text-muted-foreground mt-2">
+                    This recommendation requires manual action — Apply Fix is disabled
+                    because the remediation needs human input (e.g. choosing config values).
+                  </p>
+                )}
               </div>
             </>
           )}

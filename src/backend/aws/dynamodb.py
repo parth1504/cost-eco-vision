@@ -228,16 +228,20 @@ async def list_dynamodb_tables():
         return []
 
 def get_consumed_read_write_capacity(table_name, region="us-east-1"):
-    """Return % DynamoDB capacity usage based on consumed RCUs/WCUs."""
+    """
+    Return DynamoDB capacity usage as a dict:
+      {"read_capacity": <pct 0-100>, "write_capacity": <pct 0-100>}
+    Empty dict if the table is on-demand or metrics unavailable.
+    """
 
     try:
         desc = dynamodb.describe_table(TableName=table_name)["Table"]
         rc = desc.get("ProvisionedThroughput", {}).get("ReadCapacityUnits", 0)
         wc = desc.get("ProvisionedThroughput", {}).get("WriteCapacityUnits", 0)
 
-        # On-demand tables return NONE
+        # On-demand tables have no provisioned capacity to compare against.
         if rc == 0 and wc == 0:
-            return 0
+            return {}
 
         end = datetime.utcnow()
         start = end - timedelta(hours=12)
@@ -264,17 +268,21 @@ def get_consumed_read_write_capacity(table_name, region="us-east-1"):
             Statistics=["Average"]
         )
 
-        rc_used = read_metrics.get("Datapoints", [])
-        wc_used = write_metrics.get("Datapoints", [])
+        # CloudWatch doesn't guarantee chronological order; sort to be safe.
+        rc_used = sorted(read_metrics.get("Datapoints", []), key=lambda d: d["Timestamp"])
+        wc_used = sorted(write_metrics.get("Datapoints", []), key=lambda d: d["Timestamp"])
 
         read_percent = (rc_used[-1]["Average"] / rc) * 100 if rc_used and rc > 0 else 0
         write_percent = (wc_used[-1]["Average"] / wc) * 100 if wc_used and wc > 0 else 0
 
-        return round(max(read_percent, write_percent), 2)
+        return {
+            "read_capacity": round(read_percent, 2),
+            "write_capacity": round(write_percent, 2),
+        }
 
     except Exception as e:
         print(f"Failed to get DynamoDB capacity for {table_name}: {e}")
-        return 0
+        return {}
 
 from datetime import datetime
 
@@ -321,29 +329,40 @@ def get_dynamodb_config(desc, table_name):
     # ------------------------
     # PITR (Point-in-Time Recovery)
     # ------------------------
+    # On API failure leave as None ("unknown") so the agent doesn't fire
+    # a false-positive recommendation when we couldn't actually check.
     try:
-        pitr = dynamodb.describe_continuous_backups(
-            TableName=table_name
-        )
-        pitr_enabled = pitr["ContinuousBackupsDescription"] \
-            .get("PointInTimeRecoveryDescription", {}) \
+        pitr = dynamodb.describe_continuous_backups(TableName=table_name)
+        pitr_enabled = (
+            pitr["ContinuousBackupsDescription"]
+            .get("PointInTimeRecoveryDescription", {})
             .get("PointInTimeRecoveryStatus") == "ENABLED"
+        )
     except Exception:
-        pitr_enabled = False
+        pitr_enabled = None
 
     # ------------------------
     # Encryption
     # ------------------------
-    sse_desc = desc.get("SSEDescription", {})
-    encryption_enabled = sse_desc.get("Status") == "ENABLED"
+    # When SSEDescription is absent, the table uses the AWS-owned default
+    # KMS key — which IS encrypted. So absence != disabled.
+    sse_desc = desc.get("SSEDescription")
+    if sse_desc is None:
+        encryption_enabled = True  # AWS-managed default encryption
+    else:
+        encryption_enabled = sse_desc.get("Status") == "ENABLED"
 
     # ------------------------
-    # Billing mode
+    # Billing mode + provisioned capacity (used by the overutilized rule
+    # to compute proper scale-up targets — needs current units, not %)
     # ------------------------
     billing_mode = desc.get("BillingModeSummary", {}).get("BillingMode", "PROVISIONED")
+    pt = desc.get("ProvisionedThroughput", {}) or {}
 
     return {
         "pitr_enabled": pitr_enabled,
         "encryption_enabled": encryption_enabled,
-        "billing_mode": billing_mode
+        "billing_mode": billing_mode,
+        "provisioned_rcu": pt.get("ReadCapacityUnits", 0),
+        "provisioned_wcu": pt.get("WriteCapacityUnits", 0),
     }
