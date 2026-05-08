@@ -5,7 +5,44 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 from typing import Dict, Any, List, Optional
-from agent.llm.llm_client import get_llm_client
+from services.description_cache import get_description
+
+# All current rules use static descriptions — they're boilerplate that
+# doesn't depend on per-resource context. The LLM path remains available
+# via `get_description(prompt=...)` for any future rule that needs it.
+DESCRIPTIONS = {
+    "dynamodb.pitr_disabled": (
+        "Point-in-Time Recovery is disabled on this DynamoDB table. PITR lets "
+        "you restore the table to any second in the last 35 days, protecting "
+        "against accidental writes, deletes, or data corruption. It's a "
+        "one-line fix and adds minimal cost."
+    ),
+    "dynamodb.encryption_disabled": (
+        "This DynamoDB table doesn't have customer-managed KMS encryption "
+        "enabled. While AWS-owned keys provide baseline encryption, KMS-based "
+        "SSE gives you key rotation, audit logs, and compliance-friendly key "
+        "management — a hard requirement for SOC2, PCI-DSS, and HIPAA."
+    ),
+    "dynamodb.underutilized": (
+        "This provisioned-mode DynamoDB table is consistently using only a "
+        "small fraction of its provisioned capacity. Switching to on-demand "
+        "billing eliminates capacity planning entirely and charges only for "
+        "what's actually consumed — almost always cheaper for tables with "
+        "low or unpredictable traffic."
+    ),
+    "dynamodb.overutilized": (
+        "This DynamoDB table is operating near its provisioned capacity "
+        "ceiling. Sustained high utilization causes throttling, which "
+        "manifests to users as failed requests. Increasing provisioned "
+        "capacity (or switching to on-demand billing) restores headroom."
+    ),
+    "dynamodb.idle": (
+        "This DynamoDB table has had effectively zero read/write activity. "
+        "If it's no longer in use, deleting it eliminates ongoing cost. If "
+        "it's a backup or seasonal table, document the intent so it doesn't "
+        "get re-flagged on every scan."
+    ),
+}
 
 
 def generate_dynamodb_recommendations(resource):
@@ -51,17 +88,9 @@ def generate_dynamodb_recommendations(resource):
     table_name = resource.get("name") or resource.get("resource_id") or ""
     monthly_cost = resource.get("monthly_cost", 0) or 0
 
-    # --- Safety: skip very new tables ---
-    creation_date = metadata.get("creation_date")
-    if creation_date:
-        try:
-            created = datetime.fromisoformat(creation_date.replace("Z", ""))
-            if datetime.utcnow() - created < timedelta(days=2):
-                return []
-        except Exception:
-            pass
+    # NOTE: the "< 2 days old" safety guard has been removed so freshly-
+    # imported tables surface recommendations immediately.
 
-    llm = get_llm_client()
 
     # Track which "size" decision we've already produced so we don't emit
     # contradictory recommendations on the same table.
@@ -69,8 +98,10 @@ def generate_dynamodb_recommendations(resource):
 
     # --- RULE 1: PITR (independent of sizing) ---
     if pitr_enabled is False:
-        description = llm.generate(
-            "Explain why enabling Point-in-Time Recovery (PITR) is critical for DynamoDB data protection."
+        description = get_description(
+            "dynamodb.pitr_disabled",
+            prompt="Explain why enabling Point-in-Time Recovery (PITR) is critical for DynamoDB data protection.",
+            static_text=DESCRIPTIONS["dynamodb.pitr_disabled"],
         )
         recommendations.append({
             "title": "Enable Point-in-Time Recovery (PITR)",
@@ -110,8 +141,10 @@ def generate_dynamodb_recommendations(resource):
 
     # --- RULE 2: ENCRYPTION (independent of sizing) ---
     if encryption_enabled is False:
-        description = llm.generate(
-            "Explain why enabling encryption at rest is important for DynamoDB security."
+        description = get_description(
+            "dynamodb.encryption_disabled",
+            prompt="Explain why enabling encryption at rest is important for DynamoDB security.",
+            static_text=DESCRIPTIONS["dynamodb.encryption_disabled"],
         )
         recommendations.append({
             "title": "Enable DynamoDB Encryption",
@@ -156,8 +189,10 @@ def generate_dynamodb_recommendations(resource):
     # Marked manual_only because deletion shouldn't be auto-executed.
     if read_usage < 1 and write_usage < 1:
         size_decision_made = True
-        description = llm.generate(
-            "Explain why an idle DynamoDB table should be reviewed or removed to save cost."
+        description = get_description(
+            "dynamodb.idle",
+            prompt="Explain why an idle DynamoDB table should be reviewed or removed to save cost.",
+            static_text=DESCRIPTIONS["dynamodb.idle"],
         )
         recommendations.append({
             "title": "Idle Table Detected — Review or Remove",
@@ -194,8 +229,13 @@ def generate_dynamodb_recommendations(resource):
     ):
         size_decision_made = True
         estimated_saving = round(monthly_cost * 0.4, 2)
-        description = llm.generate(
-            f"Explain why a DynamoDB table with low read ({read_usage}%) and write ({write_usage}%) usage should switch to on-demand billing."
+        description = get_description(
+            "dynamodb.underutilized",
+            prompt=(
+                f"Explain why a DynamoDB table with low read ({read_usage}%) and "
+                f"write ({write_usage}%) usage should switch to on-demand billing."
+            ),
+            static_text=DESCRIPTIONS["dynamodb.underutilized"],
         )
         recommendations.append({
             "title": "Underutilized Table — Switch to On-Demand",
@@ -239,8 +279,13 @@ def generate_dynamodb_recommendations(resource):
         new_rcu = max(int((provisioned_rcu or 5) * 1.5), 10)
         new_wcu = max(int((provisioned_wcu or 5) * 1.5), 10)
 
-        description = llm.generate(
-            f"Explain why a DynamoDB table with high usage (read {read_usage}%, write {write_usage}%) needs scaling."
+        description = get_description(
+            "dynamodb.overutilized",
+            prompt=(
+                f"Explain why a DynamoDB table with high usage (read {read_usage}%, "
+                f"write {write_usage}%) needs scaling."
+            ),
+            static_text=DESCRIPTIONS["dynamodb.overutilized"],
         )
         recommendations.append({
             "title": "Overutilized Table — Scale Capacity",

@@ -15,6 +15,7 @@ recommendations_table = dynamodb.Table("Recommendations")
 alerts_table = dynamodb.Table("Alerts")
 incidents_table = dynamodb.Table("Incidents")
 security_triage_table = dynamodb.Table("SecurityTriage")
+descriptions_table = dynamodb.Table("Descriptions")
 
 # Set up logging
 logger = logging.getLogger("db")
@@ -215,6 +216,35 @@ def list_security_triage():
     except ClientError as e:
         if e.response["Error"]["Code"] == "ResourceNotFoundException":
             return []
+        raise
+
+
+# =============================================================================
+# Description cache (rule_id → static text or LLM-generated text)
+# =============================================================================
+
+def get_description_from_cache(cache_key: str):
+    try:
+        response = descriptions_table.get_item(Key={"cache_key": cache_key})
+        item = response.get("Item")
+        return item.get("text") if item else None
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "ResourceNotFoundException":
+            return None
+        raise
+
+
+def upsert_description_in_cache(cache_key: str, text: str):
+    try:
+        descriptions_table.put_item(Item={
+            "cache_key": cache_key,
+            "text": text,
+            "cached_at": datetime.utcnow().isoformat(),
+        })
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "ResourceNotFoundException":
+            print("[db] Descriptions table missing — run scripts/setup_dynamodb.py")
+            return
         raise
 
 

@@ -27,7 +27,28 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, Iterable, List, Set, Tuple
 
 # Tuning knobs — keep at module level so they're easy to grep / override later.
-TIME_WINDOW_MINUTES = 15
+
+# Default time window when the alert's category isn't in the per-category map.
+DEFAULT_TIME_WINDOW_MINUTES = 15
+
+# Per-category time windows. Different domains have different natural rhythms:
+#   - security alerts: tight cause-effect chains, but slow-cause/fast-effect
+#     means we should look back further than performance signals
+#   - cost alerts: slow-moving (daily aggregates), so a wider window is
+#     needed to group flare-ups of the same root cause
+#   - performance alerts: should cluster tightly — fast incidents, fast
+#     correlation
+#   - drift: configuration changes propagate over tens of minutes
+TIME_WINDOWS_BY_CATEGORY: dict[str, int] = {
+    "security": 30,
+    "cost": 60,
+    "performance": 10,
+    "drift": 30,
+}
+
+# Backward-compat constant — keep for `scripts/test_correlation.py` and any
+# other code that reads it. Mirrors DEFAULT_TIME_WINDOW_MINUTES.
+TIME_WINDOW_MINUTES = DEFAULT_TIME_WINDOW_MINUTES
 
 SEVERITY_RANK = {"low": 1, "medium": 2, "high": 3, "critical": 4}
 
@@ -35,6 +56,11 @@ SEVERITY_RANK = {"low": 1, "medium": 2, "high": 3, "critical": 4}
 # If two alerts share any of these (key + value), they're considered related
 # regardless of differing resource_ids.
 CORRELATION_TAGS = ("Service", "Owner", "Environment", "Application", "Team")
+
+
+def _window_for_category(category: str) -> int:
+    """Resolve the time window for a category, falling back to default."""
+    return TIME_WINDOWS_BY_CATEGORY.get((category or "").lower(), DEFAULT_TIME_WINDOW_MINUTES)
 
 
 # ---------------------------------------------------------------------------
@@ -102,18 +128,26 @@ def _max_severity(alerts: Iterable[Dict[str, Any]]) -> str:
 
 def _stable_incident_id(category: str, resources: List[str], earliest_ts: datetime) -> str:
     """
-    Deterministic id derived from (category + sorted resources + date).
+    Deterministic id derived from (category + sorted resources + date + time bucket).
 
-    Why these inputs:
+    Inputs and why:
       - **Resources** instead of member ids: the same incident can pick up
         new alerts on the SAME resources without changing id.
       - **Category**: cost vs security incidents on overlapping resources
         are different incidents and must have different ids.
       - **Date**: a recurring misconfiguration on the same bucket on
-        different days should be different incidents (different timeline,
-        different remediation context).
+        different days should be different incidents.
+      - **Time bucket** (Tier S #C fix): two clusters with identical
+        category + resources + date but separated in time (>1 window apart)
+        used to collide on the same incident_id and overwrite each other in
+        DDB. The bucket size matches the category's correlation window, so
+        alerts that *can* cluster always land in the same bucket and alerts
+        that *can't* cluster always land in different buckets.
     """
-    fingerprint = f"{category}|" + "|".join(sorted(resources))
+    window = _window_for_category(category)
+    minutes_of_day = earliest_ts.hour * 60 + earliest_ts.minute
+    time_bucket = minutes_of_day // window
+    fingerprint = f"{category}|{time_bucket}|" + "|".join(sorted(resources))
     digest = hashlib.sha1(fingerprint.encode()).hexdigest()[:10]
     return f"INC-{earliest_ts.strftime('%Y%m%d')}-{digest}"
 
@@ -145,20 +179,23 @@ class _UnionFind:
 def _are_related(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
     """
     Two alerts are 'related' (belong in the same incident) when ALL of:
-      1. They fired within TIME_WINDOW_MINUTES of each other
-      2. They share a category (cost ≠ security, etc.)
+      1. They share a category (cost ≠ security, etc.) — checked first
+         because the time window depends on the category.
+      2. They fired within the category's time window of each other.
       3. They share a blast surface — at least one of:
            a. an affected resource_id
            b. a value on one of the CORRELATION_TAGS
     """
-    # 1. Time
-    ts_a = _parse_ts(a.get("timestamp", ""))
-    ts_b = _parse_ts(b.get("timestamp", ""))
-    if abs((ts_a - ts_b).total_seconds()) > TIME_WINDOW_MINUTES * 60:
+    # 1. Category — different domains never merge.
+    cat_a = _alert_category(a)
+    if cat_a != _alert_category(b):
         return False
 
-    # 2. Category — different domains never merge.
-    if _alert_category(a) != _alert_category(b):
+    # 2. Time — per-category window
+    window = _window_for_category(cat_a)
+    ts_a = _parse_ts(a.get("timestamp", ""))
+    ts_b = _parse_ts(b.get("timestamp", ""))
+    if abs((ts_a - ts_b).total_seconds()) > window * 60:
         return False
 
     # 3. Shared blast surface

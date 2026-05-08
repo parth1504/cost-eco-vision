@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Response, Body
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 import io
@@ -7,8 +7,11 @@ from services.incidents import (
     get_incident_detail,
     list_incidents,
     refresh_incidents,
+    update_incident_status,
+    VALID_STATUSES,
 )
 from services.incident_agent import analyze_incident
+from services.correlation_layer2 import run_layer2_correlation
 
 router = APIRouter(prefix="/incident", tags=["incident"])
 
@@ -27,10 +30,26 @@ async def refresh():
     return await refresh_incidents()
 
 
+@router.post("/correlate-l2")
+async def correlate_layer2():
+    """
+    Run an opt-in LLM Layer-2 correlation pass: looks at singleton alerts
+    + existing incidents and asks the model to merge cross-service incidents
+    that Layer-1 deterministic rules couldn't catch.
+
+    Single LLM call. Mutations are applied in-place and recorded on each
+    affected incident under `layer2_merges`.
+    """
+    try:
+        return run_layer2_correlation()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Layer-2 correlation failed: {e}")
+
+
 @router.get("")
-async def list_all():
+async def list_all(include_resolved: bool = True):
     """List all known incidents (most recent first)."""
-    return await list_incidents()
+    return await list_incidents(include_resolved=include_resolved)
 
 
 @router.get("/{incident_id}")
@@ -40,6 +59,29 @@ async def get_one(incident_id: str):
     if not detail.get("timeline"):
         raise HTTPException(status_code=404, detail="Incident not found or has no alerts")
     return detail
+
+
+@router.post("/{incident_id}/status")
+async def set_status(incident_id: str, payload: dict = Body(...)):
+    """
+    Transition an incident to a new lifecycle status.
+    Body: {"status": "open" | "investigating" | "mitigated" | "resolved"}
+    """
+    new_status = (payload or {}).get("status")
+    if not new_status:
+        raise HTTPException(status_code=422, detail="Missing 'status' in request body")
+    if new_status not in VALID_STATUSES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid status {new_status!r}. Must be one of {list(VALID_STATUSES)}",
+        )
+    try:
+        return await update_incident_status(incident_id, new_status)
+    except ValueError as e:
+        # Distinguish "not found" from "invalid transition" via message.
+        msg = str(e)
+        code = 404 if "not found" in msg.lower() else 409
+        raise HTTPException(status_code=code, detail=msg)
 
 
 @router.post("/{incident_id}/analyze")

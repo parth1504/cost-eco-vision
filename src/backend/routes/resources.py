@@ -12,9 +12,14 @@ router = APIRouter(prefix="/resources", tags=["resources"])
 
 
 @router.get("")
-async def get_resources():
-    print("Fetching all resources...")
-    resources_data = await get_all_resources() 
+async def get_resources(force: bool = False):
+    """
+    Pass ?force=true to bypass the agent cooldown — useful after deploying
+    a new rule so all resources get re-evaluated instead of waiting up to
+    60 minutes for each cache to expire individually.
+    """
+    print(f"Fetching all resources... (force={force})")
+    resources_data = await get_all_resources(force=force)
     return resources_data
 
 

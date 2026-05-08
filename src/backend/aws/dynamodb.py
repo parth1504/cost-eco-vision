@@ -185,39 +185,43 @@ dynamodb_recommendations = [
     # }
 ]
 
-async def list_dynamodb_tables():
-    """Fetch all DynamoDB tables and enrich with DynamoDB-backed state."""
+async def list_dynamodb_tables(force: bool = False):
+    """
+    Fetch all DynamoDB tables and enrich with DynamoDB-backed state.
+
+    Pass force=True to bypass the cooldown and force a fresh agent re-run.
+    On re-run we now re-fetch live metrics+config from AWS rather than
+    feeding stale cached fields to the agent.
+    """
     try:
         response = dynamodb.list_tables()
         table_names = response.get("TableNames", [])
         tables = []
 
         for name in table_names:
-            
-
             db_item = get_resource_from_db(name, "DynamoDB")
 
             if db_item:
-                table_data=db_item
-                table_data["resource_id"] = name
-                last_run= table_data.get("last_agent_run")
-                print(f"DynamoDB Table {name} last agent run: {last_run}")
-                print(f"DynamoDB Table {name} - should run agent? {should_run_agent(last_run)}")
+                last_run = db_item.get("last_agent_run")
+                print(f"DynamoDB Table {name} last agent run: {last_run}, force={force}")
 
-                if should_run_agent(last_run):
+                if should_run_agent(last_run, force=force):
+                    desc = dynamodb.describe_table(TableName=name)["Table"]
+                    table_data = build_dynamodb_resource(desc, name)
+                    table_data["is_optimized"] = db_item.get("is_optimized", False)
                     recommendations = generateRecommendations(table_data)
                     table_data["recommendations"] = recommendations
                     table_data["last_agent_run"] = datetime.utcnow().isoformat()
-
                     save_resource_in_db(name, "DynamoDB", table_data)
+                else:
+                    table_data = db_item
+                    table_data["resource_id"] = name
             else:
-                
-
-                desc= dynamodb.describe_table(TableName=name)["Table"]
-                table_data=build_dynamodb_resource(desc,name)
-                recommendations=generateRecommendations(table_data)
-                table_data["recommendations"]=recommendations
-                saved=save_resource_in_db(name, "DynamoDB", table_data)
+                desc = dynamodb.describe_table(TableName=name)["Table"]
+                table_data = build_dynamodb_resource(desc, name)
+                recommendations = generateRecommendations(table_data)
+                table_data["recommendations"] = recommendations
+                save_resource_in_db(name, "DynamoDB", table_data)
 
             tables.append(table_data)
 

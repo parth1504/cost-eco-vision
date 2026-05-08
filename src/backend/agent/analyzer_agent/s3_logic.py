@@ -5,17 +5,36 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 from typing import Dict, Any, List, Optional
-from agent.llm.llm_client import get_llm_client
+from services.description_cache import get_description
 
-
-def _generate_description(prompt: str) -> str:
-    logger.info("Generating description for prompt: %s", prompt)
-    try:
-        llm = get_llm_client()
-        return llm.generate(prompt)
-    except Exception as e:
-        logger.error("Error generating description: %s", e)
-        return prompt
+# Static descriptions per rule. Boilerplate that doesn't depend on
+# per-resource context — see services/description_cache.py for rationale.
+DESCRIPTIONS = {
+    "s3.public_access": (
+        "This S3 bucket allows public access, the leading cause of data "
+        "leakage incidents in cloud breaches. Enabling Block Public Access "
+        "prevents accidental exposure via ACLs, bucket policies, or new "
+        "objects with permissive settings."
+    ),
+    "s3.encryption_disabled": (
+        "This S3 bucket lacks server-side encryption at rest, violating "
+        "common compliance frameworks (SOC2, HIPAA, PCI-DSS). Enabling "
+        "AES-256 encryption is free and protects data from unauthorized "
+        "access at the storage layer."
+    ),
+    "s3.versioning_disabled": (
+        "Versioning is disabled on this S3 bucket. Without versioning, "
+        "accidental deletions or overwrites are unrecoverable. Versioning "
+        "protects against operational errors and ransomware-style data "
+        "destruction."
+    ),
+    "s3.low_usage": (
+        "This S3 bucket holds less than 1GB of data. Configuring a "
+        "lifecycle policy to transition objects to S3 Standard-IA or "
+        "Glacier after 30 days reduces storage cost with minimal impact on "
+        "access patterns."
+    ),
+}
 
 
 def check_s3_public_access(resource: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -23,8 +42,10 @@ def check_s3_public_access(resource: Dict[str, Any]) -> Optional[Dict[str, Any]]
     bucket_name = resource.get("name")
 
     if config.get("public_access_blocked") is False:
-        description = _generate_description(
-            f"Explain why public access on S3 bucket '{bucket_name}' is a critical security risk and should be blocked."
+        description = get_description(
+            "s3.public_access",
+            prompt=f"Explain why public access on S3 bucket '{bucket_name}' is a critical security risk and should be blocked.",
+            static_text=DESCRIPTIONS["s3.public_access"],
         )
 
         return {
@@ -67,8 +88,10 @@ def check_s3_encryption(resource: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     bucket_name = resource.get("name")
 
     if config.get("encryption_enabled") is False:
-        description = _generate_description(
-            f"Explain why enabling encryption on S3 bucket '{bucket_name}' is important for data protection and compliance."
+        description = get_description(
+            "s3.encryption_disabled",
+            prompt=f"Explain why enabling encryption on S3 bucket '{bucket_name}' is important for data protection and compliance.",
+            static_text=DESCRIPTIONS["s3.encryption_disabled"],
         )
 
         return {
@@ -114,8 +137,10 @@ def check_s3_versioning(resource: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     bucket_name = resource.get("name")
 
     if config.get("versioning_enabled") is False:
-        description = _generate_description(
-            f"Explain why enabling versioning on S3 bucket '{bucket_name}' improves resilience and recovery."
+        description = get_description(
+            "s3.versioning_disabled",
+            prompt=f"Explain why enabling versioning on S3 bucket '{bucket_name}' improves resilience and recovery.",
+            static_text=DESCRIPTIONS["s3.versioning_disabled"],
         )
 
         return {
@@ -151,13 +176,21 @@ def check_s3_versioning(resource: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 
 def check_s3_low_usage(resource: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    metrics = resource.get("metrics", {})
+    metrics = resource.get("metrics", {}) or {}
     bucket_name = resource.get("name")
-    storage_bytes = metrics.get("storage_bytes", 0)
+    storage_bytes = metrics.get("storage_bytes")
+
+    # Skip if size is unknown — firing "low storage" on an unmeasured bucket
+    # is a false positive. (Previously this crashed with TypeError because
+    # `.get(key, 0)` returns None when the key exists with None value.)
+    if storage_bytes is None:
+        return None
 
     if storage_bytes < (1 * 1024 * 1024 * 1024):
-        description = _generate_description(
-            f"Explain cost optimization strategies for an S3 bucket '{bucket_name}' storing less than 1GB of data."
+        description = get_description(
+            "s3.low_usage",
+            prompt=f"Explain cost optimization strategies for an S3 bucket '{bucket_name}' storing less than 1GB of data.",
+            static_text=DESCRIPTIONS["s3.low_usage"],
         )
 
         return {
@@ -222,27 +255,15 @@ def analyze_s3_resource(resource: Dict[str, Any]) -> List[Dict[str, Any]]:
 def generate_s3_recommendations(resource):
     """
     Entry point for S3 analyzer agent.
-    Ensures safety checks and delegates to analysis layer.
-    """
+    Delegates to the analysis layer.
 
+    NOTE: the "< 1 day old" safety guard has been removed so freshly-
+    imported buckets surface recommendations immediately.
+    """
     if not resource or resource.get("type") != "S3":
         return []
 
-    # Skip if already optimized (context awareness)
     if resource.get("is_optimized"):
         return []
-
-    # Optional safety: skip very new buckets
-    metadata = resource.get("metadata", {})
-    creation_date = metadata.get("creation_date")
-
-    if creation_date:
-        try:
-            from datetime import datetime, timedelta
-            created = datetime.fromisoformat(creation_date.replace("Z", ""))
-            if datetime.utcnow() - created < timedelta(days=1):
-                return []
-        except Exception:
-            pass
 
     return analyze_s3_resource(resource)

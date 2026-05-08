@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { motion } from "framer-motion";
-import { Clock, CheckCircle, AlertTriangle, Activity, FileText, Lightbulb, RefreshCw } from "lucide-react";
+import { Clock, CheckCircle, AlertTriangle, Activity, FileText, Lightbulb, RefreshCw, Sparkles } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -37,10 +37,38 @@ type TimelineEvent = {
 
 type IncidentDetail = {
   incident_id: string;
+  status: string;
+  investigating_at?: string | null;
+  mitigated_at?: string | null;
+  resolved_at?: string | null;
   timeline: TimelineEvent[];
   rootCause: any | null;     // populated by LLM agent in step 3
   checklist: any[];          // populated by LLM agent in step 3
   generated_at: string;
+};
+
+type LifecycleStatus = "open" | "investigating" | "mitigated" | "resolved";
+
+const STATUS_LABELS: Record<LifecycleStatus, string> = {
+  open: "Open",
+  investigating: "Investigating",
+  mitigated: "Mitigated",
+  resolved: "Resolved",
+};
+
+const STATUS_COLORS: Record<LifecycleStatus, string> = {
+  open: "bg-destructive/10 text-destructive border-destructive/20",
+  investigating: "bg-warning/10 text-warning border-warning/20",
+  mitigated: "bg-primary/10 text-primary border-primary/20",
+  resolved: "bg-success/10 text-success border-success/20",
+};
+
+// Forward-only state machine — mirrors services/incidents.py.
+const NEXT_STATES: Record<LifecycleStatus, LifecycleStatus[]> = {
+  open: ["investigating", "mitigated", "resolved"],
+  investigating: ["mitigated", "resolved", "open"],
+  mitigated: ["resolved", "investigating", "open"],
+  resolved: ["open", "investigating"],
 };
 
 export function IncidentCoordinator() {
@@ -51,9 +79,41 @@ export function IncidentCoordinator() {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
+  const [statusUpdating, setStatusUpdating] = useState(false);
   const [checklist, setChecklist] = useState<any[]>([]);
   const [incidentResolved, setIncidentResolved] = useState(false);
   const { toast } = useToast();
+
+  const transitionStatus = async (next: LifecycleStatus) => {
+    if (!selectedId || !detail) return;
+    setStatusUpdating(true);
+    try {
+      const res = await fetch(`${API}/incident/${selectedId}/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: next }),
+      });
+      if (!res.ok) {
+        const body = await res.text();
+        throw new Error(body || `Backend returned ${res.status}`);
+      }
+      // Refresh detail + the list (status changes may filter the row).
+      await loadDetail(selectedId);
+      await loadIncidents(false);
+      toast({
+        title: "Status updated",
+        description: `Incident is now ${STATUS_LABELS[next]}.`,
+      });
+    } catch (err) {
+      toast({
+        title: "Couldn't update status",
+        description: String(err),
+        variant: "destructive",
+      });
+    } finally {
+      setStatusUpdating(false);
+    }
+  };
 
   // ----- data loading -----------------------------------------------------
 
@@ -137,6 +197,34 @@ export function IncidentCoordinator() {
     }
   };
 
+  const runLayer2 = async () => {
+    setRefreshing(true);
+    try {
+      const res = await fetch(`${API}/incident/correlate-l2`, { method: "POST" });
+      if (!res.ok) {
+        const body = await res.text();
+        throw new Error(body || `Backend returned ${res.status}`);
+      }
+      const result = await res.json();
+      const joins = result.joins_applied ?? 0;
+      const creates = result.new_incidents_created ?? 0;
+      toast({
+        title: "AI cross-service correlation complete",
+        description:
+          joins + creates === 0
+            ? "No cross-service merges needed."
+            : `${joins} alert(s) joined existing incidents, ${creates} new incident(s) created from singletons.`,
+      });
+      // Refresh the list so any new/updated incidents appear.
+      await loadIncidents(false);
+    } catch (err) {
+      console.error("Layer-2 correlation failed:", err);
+      toast({ title: "AI correlation failed", description: String(err), variant: "destructive" });
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   useEffect(() => {
     loadIncidents();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -203,15 +291,27 @@ export function IncidentCoordinator() {
                 <span>Active Incidents</span>
                 <Badge variant="outline">{incidents.length}</Badge>
               </div>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={refreshCorrelation}
-                disabled={refreshing}
-              >
-                <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? "animate-spin" : ""}`} />
-                {refreshing ? "Correlating..." : "Re-run correlation"}
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={refreshCorrelation}
+                  disabled={refreshing}
+                >
+                  <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? "animate-spin" : ""}`} />
+                  {refreshing ? "Working..." : "Re-run correlation"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={runLayer2}
+                  disabled={refreshing || incidents.length === 0}
+                  title="Use the AI to find cross-service incidents that deterministic rules missed"
+                >
+                  <Sparkles className={`h-4 w-4 mr-2 ${refreshing ? "animate-pulse" : ""}`} />
+                  AI cross-service
+                </Button>
+              </div>
             </CardTitle>
             <CardDescription>
               Alerts grouped into incidents by resource overlap and time window.
@@ -266,18 +366,61 @@ export function IncidentCoordinator() {
           <motion.div variants={itemVariants}>
             <Card className="dashboard-card">
               <CardHeader>
-                <CardTitle className="flex items-center space-x-2">
-                  <Clock className="h-5 w-5 text-primary" />
-                  <span>Incident Timeline</span>
-                  {selectedSummary && (
-                    <Badge variant="outline" className="ml-2">
-                      {selectedSummary.incident_id}
-                    </Badge>
-                  )}
-                </CardTitle>
-                <CardDescription>
-                  Chronological view of correlated events, logs, and actions
-                </CardDescription>
+                <div className="flex items-start justify-between gap-4 flex-wrap">
+                  <div>
+                    <CardTitle className="flex items-center space-x-2 flex-wrap">
+                      <Clock className="h-5 w-5 text-primary" />
+                      <span>Incident Timeline</span>
+                      {selectedSummary && (
+                        <Badge variant="outline" className="ml-2">
+                          {selectedSummary.incident_id}
+                        </Badge>
+                      )}
+                      <Badge className={STATUS_COLORS[(detail.status as LifecycleStatus) || "open"]}>
+                        {STATUS_LABELS[(detail.status as LifecycleStatus) || "open"]}
+                      </Badge>
+                    </CardTitle>
+                    <CardDescription className="mt-1">
+                      Chronological view of correlated events, logs, and actions
+                    </CardDescription>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {(NEXT_STATES[(detail.status as LifecycleStatus) || "open"] || []).map(next => (
+                      <Button
+                        key={next}
+                        size="sm"
+                        variant="outline"
+                        onClick={() => transitionStatus(next)}
+                        disabled={statusUpdating}
+                      >
+                        {next === "resolved" && <CheckCircle className="h-3 w-3 mr-1" />}
+                        {next === "investigating" && <Activity className="h-3 w-3 mr-1" />}
+                        {next === "mitigated" && <CheckCircle className="h-3 w-3 mr-1" />}
+                        {next === "open" && <AlertTriangle className="h-3 w-3 mr-1" />}
+                        Mark {STATUS_LABELS[next]}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+                {(detail.investigating_at || detail.mitigated_at || detail.resolved_at) && (
+                  <div className="mt-2 text-xs text-muted-foreground space-x-3">
+                    {detail.investigating_at && (
+                      <span>
+                        Investigating since {new Date(detail.investigating_at).toLocaleString()}
+                      </span>
+                    )}
+                    {detail.mitigated_at && (
+                      <span>
+                        Mitigated at {new Date(detail.mitigated_at).toLocaleString()}
+                      </span>
+                    )}
+                    {detail.resolved_at && (
+                      <span>
+                        Resolved at {new Date(detail.resolved_at).toLocaleString()}
+                      </span>
+                    )}
+                  </div>
+                )}
               </CardHeader>
               <CardContent>
                 {detail.timeline.length === 0 ? (

@@ -4,7 +4,40 @@ import logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-from agent.llm.llm_client import get_llm_client
+from services.description_cache import get_description
+
+# Static descriptions per rule. See services/description_cache.py for why
+# we don't burn LLM quota on every refresh — these are boilerplate that
+# doesn't actually change between resources.
+DESCRIPTIONS = {
+    "ec2.idle": (
+        "This EC2 instance has near-zero CPU and network utilization. "
+        "Running idle compute accumulates cost without delivering value. "
+        "Stop the instance if it's not needed, or schedule it to start "
+        "only during business hours."
+    ),
+    "ec2.overutilized": (
+        "This EC2 instance is hitting high CPU peaks, which causes request "
+        "timeouts and degraded performance for users. Scaling up to a "
+        "larger instance type provides headroom for load spikes."
+    ),
+    "ec2.bursty": (
+        "This EC2 instance has low average CPU but periodic high peaks. A "
+        "static instance is wasteful during quiet periods and risky during "
+        "spikes. An Auto Scaling Group dynamically adjusts capacity to "
+        "match demand."
+    ),
+    "ec2.underutilized": (
+        "This EC2 instance has consistently low CPU and network usage over "
+        "the last 7 days. Downsizing to a smaller instance type maintains "
+        "performance while reducing monthly cost."
+    ),
+    "ec2.health_failed": (
+        "This EC2 instance has failed status checks in the recent monitoring "
+        "window. Status check failures indicate underlying hardware or "
+        "system issues that typically require a reboot to resolve."
+    ),
+}
 
 
 def generate_ec2_recommendations(resource):
@@ -36,32 +69,22 @@ def generate_ec2_recommendations(resource):
     health = metrics.get("health", {}) or {}
     config = resource.get("config", {}) or {}
 
-    cpu_avg = cpu.get("avg_7d")
-    cpu_max = cpu.get("max_7d")
-    net_in = network.get("in_avg_7d", 0) or 0
-    net_out = network.get("out_avg_7d", 0) or 0
+    # Default missing metrics to 0 rather than None so rules can still fire
+    # on resources that haven't accumulated 7 days of CloudWatch data. (The
+    # "< 2 days old" / "no metrics" safety guards have been removed for now
+    # so the user can see recommendations on freshly-imported resources.)
+    cpu_avg = cpu.get("avg_7d") or 0
+    cpu_max = cpu.get("max_7d") or 0
+    net_in = network.get("in_avg_7d") or 0
+    net_out = network.get("out_avg_7d") or 0
     net_total = net_in + net_out
 
     instance_type = config.get("instance_type", "")
     # Use the real instance id, not a placeholder.
     instance_id = resource.get("resource_id") or resource.get("name") or ""
 
-    # --- Safety Guards ---
-    if cpu_avg is None or cpu_max is None:
-        return []
-
-    creation_date = resource.get("creation_date")
-    if creation_date:
-        try:
-            created = datetime.fromisoformat(creation_date.replace("Z", ""))
-            if datetime.utcnow() - created < timedelta(days=2):
-                return []
-        except Exception:
-            pass
-
     skip_small_instance = instance_type in ("t3.micro", "t2.micro")
 
-    llm = get_llm_client()
 
     # ------------------------------------------------------------------
     # SIZING RULES — apply explicit precedence so we emit at most one
@@ -73,8 +96,10 @@ def generate_ec2_recommendations(resource):
     # Bursty, and Overutilized).
     if cpu_avg < 5 and net_total < 10:
         size_decision_made = True
-        description = llm.generate(
-            f"Explain why an EC2 instance with CPU avg {cpu_avg}% and near-zero network usage should be stopped to save cost."
+        description = get_description(
+            "ec2.idle",
+            prompt=f"Explain why an EC2 instance with CPU avg {cpu_avg}% and near-zero network usage should be stopped to save cost.",
+            static_text=DESCRIPTIONS["ec2.idle"],
         )
         recommendations.append({
             "title": "Idle Instance Detected — Stop Instance",
@@ -111,8 +136,10 @@ def generate_ec2_recommendations(resource):
     # RULE: OVERUTILIZED — only if not Idle.
     if not size_decision_made and cpu_max > 80:
         size_decision_made = True
-        description = llm.generate(
-            f"Explain why an EC2 instance with CPU peak {cpu_max}% should be scaled up."
+        description = get_description(
+            "ec2.overutilized",
+            prompt=f"Explain why an EC2 instance with CPU peak {cpu_max}% should be scaled up.",
+            static_text=DESCRIPTIONS["ec2.overutilized"],
         )
         recommendations.append({
             "title": "Overutilized Instance — Scale Up",
@@ -155,8 +182,10 @@ def generate_ec2_recommendations(resource):
     # error. The recommendation surfaces the suggestion; humans set up ASG.
     if not size_decision_made and cpu_avg < 20 and cpu_max > 70:
         size_decision_made = True
-        description = llm.generate(
-            f"Explain why an EC2 instance with low average CPU ({cpu_avg}%) but high peak ({cpu_max}%) should use autoscaling."
+        description = get_description(
+            "ec2.bursty",
+            prompt=f"Explain why an EC2 instance with low average CPU ({cpu_avg}%) but high peak ({cpu_max}%) should use autoscaling.",
+            static_text=DESCRIPTIONS["ec2.bursty"],
         )
         recommendations.append({
             "title": "Bursty Workload Detected — Use Auto Scaling",
@@ -194,8 +223,10 @@ def generate_ec2_recommendations(resource):
         and not skip_small_instance
     ):
         size_decision_made = True
-        description = llm.generate(
-            f"Explain why an EC2 instance with low CPU avg {cpu_avg}% and low peak {cpu_max}% should be downsized."
+        description = get_description(
+            "ec2.underutilized",
+            prompt=f"Explain why an EC2 instance with low CPU avg {cpu_avg}% and low peak {cpu_max}% should be downsized.",
+            static_text=DESCRIPTIONS["ec2.underutilized"],
         )
         recommendations.append({
             "title": "Underutilized Instance — Downsize",
@@ -238,8 +269,10 @@ def generate_ec2_recommendations(resource):
 
     # RULE: HEALTH ISSUE
     if health.get("status_check_failed_max", 0) > 0:
-        description = llm.generate(
-            "Explain why an EC2 instance with failed health checks should be restarted."
+        description = get_description(
+            "ec2.health_failed",
+            prompt="Explain why an EC2 instance with failed health checks should be restarted.",
+            static_text=DESCRIPTIONS["ec2.health_failed"],
         )
         recommendations.append({
             "title": "Instance Health Issue — Restart Recommended",

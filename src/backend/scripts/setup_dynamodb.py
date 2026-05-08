@@ -79,6 +79,20 @@ TABLES = [
         ],
         "BillingMode": "PAY_PER_REQUEST",
     },
+    {
+        # Cached recommendation descriptions, keyed by (rule_id + hash of inputs).
+        # Persists forever — the analyzer's per-rule descriptions are mostly
+        # boilerplate, so paying the LLM cost on every refresh is wasted spend
+        # against a tight free-tier daily quota.
+        "TableName": "Descriptions",
+        "KeySchema": [
+            {"AttributeName": "cache_key", "KeyType": "HASH"},
+        ],
+        "AttributeDefinitions": [
+            {"AttributeName": "cache_key", "AttributeType": "S"},
+        ],
+        "BillingMode": "PAY_PER_REQUEST",
+    },
 ]
 
 

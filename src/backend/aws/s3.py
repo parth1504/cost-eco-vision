@@ -168,41 +168,41 @@ s3_recommendations = [
 ]
 
 
-async def list_s3_buckets():
-    """Fetch all S3 buckets and enrich with DynamoDB-backed state."""
-    try:
+async def list_s3_buckets(force: bool = False):
+    """
+    Fetch all S3 buckets and enrich with DynamoDB-backed state.
 
+    Pass force=True to bypass the cooldown and force a fresh agent re-run.
+    On re-run we now re-fetch live metrics+config from AWS rather than
+    feeding stale cached fields to the agent.
+    """
+    try:
         response = s3.list_buckets()
         buckets = []
 
         for bucket in response.get("Buckets", []):
             name = bucket.get("Name")
-
             db_item = get_resource_from_db(name, "S3")
 
             if db_item:
+                last_run = db_item.get("last_agent_run")
+                print(f"Bucket {name} last agent run: {last_run}, force={force}")
 
-                bucket_data=db_item
-                bucket_data["resource_id"] = name
-
-                last_run= bucket_data.get("last_agent_run")
-                print(f"Bucket {name} last agent run: {last_run}")
-                print(f"Bucket {name} - should run agent? {should_run_agent(last_run)}")
-
-                if should_run_agent(last_run):
+                if should_run_agent(last_run, force=force):
+                    bucket_data = build_s3_resource(bucket)
+                    bucket_data["is_optimized"] = db_item.get("is_optimized", False)
                     recommendations = generateRecommendations(bucket_data)
                     bucket_data["recommendations"] = recommendations
                     bucket_data["last_agent_run"] = datetime.utcnow().isoformat()
-
                     save_resource_in_db(name, "S3", bucket_data)
-
-                
+                else:
+                    bucket_data = db_item
+                    bucket_data["resource_id"] = name
             else:
-                bucket_data=build_s3_resource(bucket)
-                
-                recommendations=generateRecommendations(bucket_data)
-                bucket_data["recommendations"]=recommendations
-                saved=save_resource_in_db(name, "S3", bucket_data)
+                bucket_data = build_s3_resource(bucket)
+                recommendations = generateRecommendations(bucket_data)
+                bucket_data["recommendations"] = recommendations
+                save_resource_in_db(name, "S3", bucket_data)
 
             buckets.append(bucket_data)
 
@@ -281,12 +281,20 @@ def build_s3_resource(bucket):
 
 
 def get_s3_metrics(bucket_name):
-    utilization = get_bucket_storage_utilization(bucket_name, get_region())
+    """
+    Return only the metric keys we actually have values for. Omitting a key
+    (vs. setting it to None) lets downstream rules cleanly distinguish
+    "data unavailable" from "data is genuinely zero" — None breaks numeric
+    comparisons; missing keys can be defaulted via .get(key, 0).
+    """
+    utilization = get_bucket_storage_utilization(bucket_name, get_region()) or {}
 
-    return {
-        "storage_bytes": utilization.get("size_bytes") if utilization else None,
-        "object_count": utilization.get("object_count") if utilization else None
-    }
+    metrics = {}
+    if utilization.get("size_bytes") is not None:
+        metrics["storage_bytes"] = utilization["size_bytes"]
+    if utilization.get("object_count") is not None:
+        metrics["object_count"] = utilization["object_count"]
+    return metrics
 
 def get_s3_config(bucket_name):
     # Public access — distinguish "no PAB configured" (legitimate finding,

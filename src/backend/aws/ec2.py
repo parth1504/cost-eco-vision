@@ -97,38 +97,47 @@ ec2_recommendations = [
    
 ]
 # ---------- EC2 ----------
-async def list_ec2_instances():
-    """Fetch all EC2 instances and enrich with DynamoDB-backed state."""
+async def list_ec2_instances(force: bool = False):
+    """
+    Fetch all EC2 instances and enrich with DynamoDB-backed state.
+
+    Pass force=True to bypass the cooldown and force a fresh agent re-run.
+    On re-run we now re-fetch live metrics+config from AWS rather than
+    feeding stale cached fields to the agent.
+    """
     try:
         response = ec2.describe_instances()
         instances = []
-        
+
         for reservation in response.get("Reservations", []):
             for instance in reservation.get("Instances", []):
 
                 instance_id = instance.get("InstanceId")
-                
+
                 # --- CHECK DYNAMODB ---
                 db_item = get_resource_from_db(instance_id, "EC2")
                 if db_item:
-                    instance_data = db_item
-                    instance_data["resource_id"] = instance_id
+                    last_run = db_item.get("last_agent_run")
+                    print(f"EC2 {instance_id} - last agent run: {last_run}, force={force}")
 
-                    last_run = instance_data.get("last_agent_run")
-                    print(f"EC2 {instance_id} - last agent run: {last_run}")
-                    print(f"EC2 {instance_id} - should run agent? {should_run_agent(last_run)}")
-                    if should_run_agent(last_run):
+                    if should_run_agent(last_run, force=force):
+                        # Build fresh from live AWS data, then preserve any
+                        # human-set / persisted state (is_optimized).
+                        instance_data = build_ec2_resource(instance)
+                        instance_data["is_optimized"] = db_item.get("is_optimized", False)
                         recommendations = generateRecommendations(instance_data)
                         instance_data["recommendations"] = recommendations
                         instance_data["last_agent_run"] = datetime.utcnow().isoformat()
-
                         save_resource_in_db(instance_id, "EC2", instance_data)
+                    else:
+                        # Within cooldown → return cached as-is.
+                        instance_data = db_item
+                        instance_data["resource_id"] = instance_id
                 else:
-                    instance_data=build_ec2_resource(instance)
-                    recommendations=generateRecommendations(instance_data)
-                    instance_data["recommendations"]=recommendations
-
-                    saved = save_resource_in_db(instance_data["name"], "EC2", instance_data)
+                    instance_data = build_ec2_resource(instance)
+                    recommendations = generateRecommendations(instance_data)
+                    instance_data["recommendations"] = recommendations
+                    save_resource_in_db(instance_data["resource_id"], "EC2", instance_data)
 
                 instances.append(instance_data)
 
@@ -172,6 +181,17 @@ def build_ec2_resource(instance):
         
     }
 
+def _to_naive_utc(dt):
+    """Normalise a datetime to naive UTC. AWS returns tz-aware datetimes
+    (e.g. instance.LaunchTime), but the rest of this codebase uses
+    `datetime.utcnow()` (naive). Mixing them in comparisons crashes."""
+    if dt is None:
+        return None
+    if dt.tzinfo is not None:
+        return dt.replace(tzinfo=None)
+    return dt
+
+
 def get_instance_utilization(instance_id, region="us-east-1", start_time=None, end_time=None):
     """
     Return latest daily-average CPU utilization (%) over the last 7 days.
@@ -182,8 +202,11 @@ def get_instance_utilization(instance_id, region="us-east-1", start_time=None, e
         instances pulled years of data and (because Datapoints are not
         chronologically guaranteed) returned a random day's value as 'latest'.
       - Sorts Datapoints by Timestamp before picking the last one.
+      - Normalises tz-aware inputs (e.g. LaunchTime) to naive UTC so the
+        comparison against `datetime.utcnow()` doesn't blow up.
     """
-    end_time = end_time or datetime.utcnow()
+    start_time = _to_naive_utc(start_time)
+    end_time = _to_naive_utc(end_time) or datetime.utcnow()
     earliest_allowed = end_time - timedelta(days=7)
     if start_time is None or start_time < earliest_allowed:
         start_time = earliest_allowed

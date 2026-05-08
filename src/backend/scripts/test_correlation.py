@@ -124,13 +124,38 @@ SCENARIOS: List[Dict[str, Any]] = [
         ],
     },
     {
-        "name": "Same bucket but >15min apart — must NOT merge",
-        "expected_incidents": 2,
+        # Security window is 30 min — 20 min apart still merges.
+        "name": "Same bucket, 20min apart, security category — should merge (security window=30)",
+        "expected_incidents": 1,
         "alerts": [
             alert("tw1", resource="bucket-Y", rtype="S3", region="us-east-1",
                   severity="High", category="security", minutes=0),
             alert("tw2", resource="bucket-Y", rtype="S3", region="us-east-1",
                   severity="High", category="security", minutes=20),
+        ],
+    },
+    {
+        # Performance window is 10 min — 20 min apart should NOT merge.
+        "name": "Same instance, 20min apart, performance category — must NOT merge (perf window=10)",
+        "expected_incidents": 2,
+        "alerts": [
+            alert("pw1", resource="i-perf", rtype="EC2", region="us-east-1",
+                  severity="High", category="performance", minutes=0),
+            alert("pw2", resource="i-perf", rtype="EC2", region="us-east-1",
+                  severity="High", category="performance", minutes=20),
+        ],
+    },
+    {
+        # Tier S #C: same resources, same category, same day, but 60+ min
+        # apart used to collide on incident_id and overwrite in DDB.
+        "name": "Same bucket, 60min apart, security — must produce DIFFERENT incident_ids",
+        "expected_incidents": 2,
+        "expect_distinct_ids": True,
+        "alerts": [
+            alert("ci1", resource="bucket-collision", rtype="S3", region="us-east-1",
+                  severity="High", category="security", minutes=0),
+            alert("ci2", resource="bucket-collision", rtype="S3", region="us-east-1",
+                  severity="High", category="security", minutes=70),
         ],
     },
     {
@@ -215,6 +240,13 @@ def run() -> None:
     for sc in SCENARIOS:
         incidents = correlate_alerts(sc["alerts"])
         ok = len(incidents) == sc["expected_incidents"]
+        # Optional check: incidents must have distinct ids (used for the
+        # same-day-collision regression case).
+        if sc.get("expect_distinct_ids"):
+            ids = {inc["incident_id"] for inc in incidents}
+            if len(ids) != len(incidents):
+                ok = False
+
         tag = "PASS" if ok else "FAIL"
         print(f"\n[{tag}]  {sc['name']}")
         print(f"  expected {sc['expected_incidents']} incident(s), got {len(incidents)}")
