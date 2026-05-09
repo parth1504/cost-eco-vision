@@ -34,13 +34,13 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List
 
-from agent.sre_agent.agents import ALL_AGENTS
-from agent.sre_agent.memory import annotate_with_history, should_emit
-from agent.sre_agent.ranker import rank
-from agent.sre_agent.report import to_legacy_dict
-from agent.sre_agent.safety import validate_and_filter
-from agent.sre_agent.signals import extract_signals
-from agent.sre_agent.telemetry import collect_from_resource, normalize
+from agent.ec2_agent.agents import ALL_AGENTS
+from agent.ec2_agent.memory import annotate_with_history, should_emit
+from agent.ec2_agent.ranker import rank
+from agent.ec2_agent.report import to_legacy_dict
+from agent.ec2_agent.safety import validate_and_filter
+from agent.ec2_agent.signals import extract_signals
+from agent.ec2_agent.telemetry import collect_from_resource, normalize
 
 logger = logging.getLogger(__name__)
 

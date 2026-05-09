@@ -19,7 +19,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from agent.sre_agent.types import Recommendation
+from agent.ec2_agent.types import Recommendation
 
 
 def _parse_iso(s: Optional[str]) -> Optional[datetime]:

@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 from typing import List
 
-from agent.sre_agent.types import Recommendation, RecCategory, Severity
+from agent.ec2_agent.types import Recommendation, RecCategory, Severity
 
 logger = logging.getLogger(__name__)
 

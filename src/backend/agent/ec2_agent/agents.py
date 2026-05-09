@@ -19,7 +19,7 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 
-from agent.sre_agent.types import (
+from agent.ec2_agent.types import (
     RecCategory,
     RecType,
     Recommendation,
@@ -27,7 +27,7 @@ from agent.sre_agent.types import (
     Signal,
     TelemetryBundle,
 )
-from agent.sre_agent.signals import signals_by_name
+from agent.ec2_agent.signals import signals_by_name
 
 logger = logging.getLogger(__name__)
 

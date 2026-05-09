@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from agent.sre_agent.types import Recommendation
+from agent.ec2_agent.types import Recommendation
 
 
 def _severity_legacy(sev_value: str) -> str:

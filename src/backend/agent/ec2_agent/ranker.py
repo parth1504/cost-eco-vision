@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import List
 
-from agent.sre_agent.types import Recommendation, Severity
+from agent.ec2_agent.types import Recommendation, Severity
 
 
 _SEV_SCORE = {

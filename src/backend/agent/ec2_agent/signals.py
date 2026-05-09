@@ -25,7 +25,7 @@ from __future__ import annotations
 import statistics
 from typing import List, Optional
 
-from agent.sre_agent.types import MetricSeries, Severity, Signal, TelemetryBundle
+from agent.ec2_agent.types import MetricSeries, Severity, Signal, TelemetryBundle
 
 
 # ---------------------------------------------------------------------------

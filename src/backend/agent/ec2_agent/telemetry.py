@@ -20,7 +20,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from agent.sre_agent.types import MetricSeries, TelemetryBundle
+from agent.ec2_agent.types import MetricSeries, TelemetryBundle
 
 
 def _series_from_avg_max(name: str, avg: Optional[float], maximum: Optional[float], unit: str = "") -> Optional[MetricSeries]:

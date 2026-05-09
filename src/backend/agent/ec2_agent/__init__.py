@@ -16,6 +16,6 @@ recommendations in the same shape as the legacy analyzer so it's a
 drop-in replacement.
 """
 
-from agent.sre_agent.orchestrator import run_sre_agent
+from agent.ec2_agent.orchestrator import run_sre_agent
 
 __all__ = ["run_sre_agent"]
