@@ -52,8 +52,10 @@ const getSeverityIcon = (severity: SecurityFinding['severity']) => {
 const getKeyStatusColor = (status: string) => {
     switch (status) {
       case 'Expired': return 'status-critical';
-      case 'Unused': return 'status-warning';
-      default: return 'status-success';
+      case 'Unused': 
+      case 'Needs Rotation': return 'status-warning';
+      case 'Active': return 'status-success';
+      default: return 'bg-muted text-muted-foreground';
     }
   };
 
@@ -66,7 +68,7 @@ export function Security() {
   const [securityScore, setSecurityScore] = useState(0);
   const [scoreTrend, setScoreTrend] = useState<any[]>([]);
   const [weeklyData, setWeeklyData] = useState<any[]>([]);
-  const [keys, setKeys] = useState<any[]>([]);
+  const [keys, setKeys] = useState<any>({ items: [], summary: {} }); // Changed: now stores both items and summary
   const [compliance, setCompliance] = useState<{
     enabled: boolean;
     message?: string;
@@ -163,6 +165,7 @@ export function Security() {
       setLoading(false);
     }
   };
+  
   const fetchSecurityData2 = async () => {
     try {
       console.log("🔄 Fetching security data from backend...");
@@ -177,17 +180,26 @@ export function Security() {
       setSecurityScore(data.score.current);
       setScoreTrend(data.score.trend);
       setWeeklyData(data.score.weeklyData || []);
-      setKeys(data.keys);
+      
+      // Handle both old and new key formats
+      if (data.keys?.items) {
+        setKeys(data.keys); // New format with items and summary
+      } else if (Array.isArray(data.keys)) {
+        setKeys({ items: data.keys, summary: {} }); // Old format - wrap in object
+      } else {
+        setKeys({ items: [], summary: {} });
+      }
     } catch (error) {
       console.error("❌ Failed to fetch security data:", error);
       setSecurityScore(0);
       setScoreTrend([]);
       setWeeklyData([]);
-      setKeys([]);
+      setKeys({ items: [], summary: {} });
     } finally {
       setLoading(false);
     }
   };
+
   const handleFixFinding = async (findingId: string) => {
     try {
       console.log("🔄 Sending fix request to backend for finding ID:", findingId);
@@ -233,28 +245,39 @@ export function Security() {
 
     return Math.round((fixedCount / relatedFindings.length) * 100);
   };
-  const handleRotateKey = (keyId: string) => {
-    setKeys(prev => prev.map(key =>
-      key.id === keyId
-        ? { ...key, status: "Active" as const, lastUsed: new Date().toISOString() }
-        : key
-    ));
 
-    // Improve security score
-    const newScore = Math.min(100, securityScore + 5);
-    setSecurityScore(newScore);
-
-    toast({
-      title: "🔄 Key Rotated Successfully",
-      description: "Security key has been rotated and security score improved by +5 points.",
+  const handleRotateKey = (keyId: string, userName: string) => {
+    // Call the actual API
+    fetch("http://localhost:8000/security/keys/rotate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key_id: keyId, user_name: userName })
+    })
+    .then(res => res.json())
+    .then(data => {
+      toast({
+        title: "🔄 Key Rotated Successfully",
+        description: data.message,
+      });
+      // Refresh keys
+      fetchSecurityData2();
+    })
+    .catch(err => {
+      toast({
+        title: "❌ Rotation Failed",
+        description: String(err),
+        variant: "destructive"
+      });
     });
   };
 
-  const unusedKeys = keys.filter(k => k.status === 'Unused').length;
-  const expiredKeys = keys.filter(k => k.status === 'Expired').length;
+  // Normalize keys to always work with array
+  const keyItems = keys?.items || [];
+  
+  const unusedKeys = keyItems.filter((k: any) => k.status === 'Unused').length;
+  const expiredKeys = keyItems.filter((k: any) => k.status === 'Expired').length;
+  const needsRotation = keyItems.filter((k: any) => k.rotationStatus === 'Overdue').length;
 
-  
-  
   const openFindings = findings.filter(f => f.status === 'Open').length;
   const fixedFindings = findings.filter(f => f.status === 'Fixed').length;
   const inProgressFindings = findings.filter(f => f.status === 'In Progress').length;
@@ -741,9 +764,9 @@ export function Security() {
                     {unusedKeys} unused
                   </Badge>
                 )}
-                {expiredKeys > 0 && (
+                {needsRotation > 0 && (
                   <Badge className="status-critical">
-                    {expiredKeys} expired
+                    {needsRotation} need rotation
                   </Badge>
                 )}
               </div>
@@ -754,7 +777,7 @@ export function Security() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {keys.map((key) => (
+              {keyItems.map((key: any) => (
                 <div
                   key={key.id}
                   className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/30 transition-colors"
@@ -773,26 +796,32 @@ export function Security() {
                         </Badge>
                       </div>
                       <div className="flex items-center space-x-4 text-xs text-muted-foreground">
+                        <span>User: {key.user}</span>
                         <span>Last used: {key.lastUsed === "Never" 
                           ? "Never" 
                           : new Date(key.lastUsed).toLocaleDateString()
                         }</span>
-                        <span>
-                          {key.expiresIn > 0 ? `Expires in ${key.expiresIn} days` : `Expired ${Math.abs(key.expiresIn)} days ago`}
-                        </span>
+                        <span>Age: {key.ageInDays} days</span>
                       </div>
+                      {key.issues && key.issues.length > 0 && (
+                        <div className="mt-2 space-y-1">
+                          {key.issues.map((issue: string, idx: number) => (
+                            <p key={idx} className="text-xs text-warning">⚠️ {issue}</p>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
 
                   <div className="flex items-center space-x-2">
-                    {key.status !== 'Active' && (
+                    {key.rotationStatus === 'Overdue' && (
                       <Button
                         size="sm"
-                        onClick={() => handleRotateKey(key.id)}
-                        className="action-primary"
+                        onClick={() => handleRotateKey(key.id, key.user)}
+                        className="action-warning"
                       >
                         <RotateCcw className="h-4 w-4 mr-2" />
-                        Rotate Key
+                        Rotate Now
                       </Button>
                     )}
                   </div>
@@ -800,10 +829,10 @@ export function Security() {
               ))}
             </div>
 
-            {keys.filter(k => k.status !== 'Active').length === 0 && (
+            {keyItems.length === 0 && (
               <div className="text-center py-8">
                 <Shield className="h-12 w-12 text-success mx-auto mb-4" />
-                <p className="text-lg font-medium text-success">All keys are secure!</p>
+                <p className="text-lg font-medium text-success">Alsl keys are secure!</p>
                 <p className="text-sm text-muted-foreground">No unused or expired keys detected</p>
               </div>
             )}

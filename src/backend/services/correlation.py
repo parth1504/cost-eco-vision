@@ -177,34 +177,37 @@ class _UnionFind:
 # ---------------------------------------------------------------------------
 
 def _are_related(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
-    """
-    Two alerts are 'related' (belong in the same incident) when ALL of:
-      1. They share a category (cost ≠ security, etc.) — checked first
-         because the time window depends on the category.
-      2. They fired within the category's time window of each other.
-      3. They share a blast surface — at least one of:
-           a. an affected resource_id
-           b. a value on one of the CORRELATION_TAGS
-    """
-    # 1. Category — different domains never merge.
+    # 1. Category — allow cross-category if SAME resource
     cat_a = _alert_category(a)
-    if cat_a != _alert_category(b):
-        return False
+    cat_b = _alert_category(b)
+    
+    same_category = (cat_a == cat_b)
+    
+    # If different categories, only allow merge if they share an exact resource
+    if not same_category:
+        shared_resources = _alert_resources(a) & _alert_resources(b)
+        if not shared_resources:
+            return False
+        # Use the wider time window of the two categories
+        window = max(_window_for_category(cat_a), _window_for_category(cat_b))
+    else:
+        window = _window_for_category(cat_a)
 
-    # 2. Time — per-category window
-    window = _window_for_category(cat_a)
+    # 2. Time window
     ts_a = _parse_ts(a.get("timestamp", ""))
     ts_b = _parse_ts(b.get("timestamp", ""))
     if abs((ts_a - ts_b).total_seconds()) > window * 60:
         return False
 
-    # 3. Shared blast surface
-    if _alert_resources(a) & _alert_resources(b):
-        return True
-    if _shared_correlation_tag(a, b):
-        return True
+    # 3. Shared blast surface (only needed for same-category; cross-category already checked above)
+    if same_category:
+        if _alert_resources(a) & _alert_resources(b):
+            return True
+        if _shared_correlation_tag(a, b):
+            return True
+        return False
 
-    return False
+    return True  # Cross-category with shared resource already passed
 
 
 # ---------------------------------------------------------------------------

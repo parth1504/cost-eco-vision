@@ -1,0 +1,8 @@
+{
+  "amzn-demo-2512": {
+    "name": "amzn-demo-2512",
+    "versioning": "Disabled",
+    "encryption": "AES256",
+    "public_access_blocked": true
+  }
+}

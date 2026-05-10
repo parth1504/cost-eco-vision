@@ -141,6 +141,16 @@ async def refresh_incidents() -> List[Dict[str, Any]]:
     """
     alerts = await generate_alerts_from_resources()
 
+    # Deduplicate alerts by id before persisting
+    seen_ids = set()
+    unique_alerts = []
+    for a in alerts:
+        aid = a.get("id")
+        if aid and aid not in seen_ids:
+            seen_ids.add(aid)
+            unique_alerts.append(a)
+    alerts = unique_alerts
+
     # Persist each alert (idempotent on alert_id).
     for a in alerts:
         if a.get("id"):

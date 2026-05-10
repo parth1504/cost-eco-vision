@@ -69,6 +69,7 @@ app.include_router(leaderboard_router)
 # Optimization endpoints
 app.include_router(optimization_router)
 
+
 # Notification endpoints
 app.include_router(notification_router)
 if __name__ == "__main__":
