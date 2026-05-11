@@ -292,26 +292,98 @@ export function IncidentCoordinator() {
                 <Badge variant="outline">{incidents.length}</Badge>
               </div>
               <div className="flex flex-wrap gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={refreshCorrelation}
-                  disabled={refreshing}
-                >
-                  <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? "animate-spin" : ""}`} />
-                  {refreshing ? "Working..." : "Re-run correlation"}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={runLayer2}
-                  disabled={refreshing || incidents.length === 0}
-                  title="Use the AI to find cross-service incidents that deterministic rules missed"
-                >
-                  <Sparkles className={`h-4 w-4 mr-2 ${refreshing ? "animate-pulse" : ""}`} />
-                  AI cross-service
-                </Button>
-              </div>
+  <Button
+    size="sm"
+    variant="outline"
+    onClick={refreshCorrelation}
+    disabled={refreshing}
+  >
+    <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? "animate-spin" : ""}`} />
+    {refreshing ? "Working..." : "Re-run correlation"}
+  </Button>
+  <Button
+    size="sm"
+    variant="outline"
+    onClick={runLayer2}
+    disabled={refreshing || incidents.length === 0}
+    title="Use the AI to find cross-service incidents that deterministic rules missed"
+  >
+    <Sparkles className={`h-4 w-4 mr-2 ${refreshing ? "animate-pulse" : ""}`} />
+    AI cross-service
+  </Button>
+  <Button
+    size="sm"
+    variant="outline"
+    onClick={async () => {
+      setRefreshing(true);
+      try {
+        const res = await fetch(`${API}/incident/scenarios/iam_breach`, { method: "POST" });
+        const data = await res.json();
+        toast({
+          title: "Scenario: IAM Breach",
+          description: `${data.alerts_injected} alerts → ${data.incidents_created} incident(s)`,
+        });
+        await loadIncidents(true);
+      } catch (err) {
+        toast({ title: "Scenario failed", description: String(err), variant: "destructive" });
+      } finally {
+        setRefreshing(false);
+      }
+    }}
+    disabled={refreshing}
+  >
+    <Sparkles className="h-4 w-4 mr-2" />
+    Demo: IAM Breach
+  </Button>
+  <Button
+    size="sm"
+    variant="outline"
+    onClick={async () => {
+      setRefreshing(true);
+      try {
+        const res = await fetch(`${API}/incident/scenarios/cost_anomaly`, { method: "POST" });
+        const data = await res.json();
+        toast({
+          title: "Scenario: Cost Anomaly",
+          description: `${data.alerts_injected} alerts → ${data.incidents_created} incident(s)`,
+        });
+        await loadIncidents(true);
+      } catch (err) {
+        toast({ title: "Scenario failed", description: String(err), variant: "destructive" });
+      } finally {
+        setRefreshing(false);
+      }
+    }}
+    disabled={refreshing}
+  >
+    <Sparkles className="h-4 w-4 mr-2" />
+    Demo: Cost Spike
+  </Button>
+  <Button
+    size="sm"
+    variant="outline"
+    onClick={async () => {
+      setRefreshing(true);
+      try {
+        const res = await fetch(`${API}/incident/scenarios/security_exposure`, { method: "POST" });
+        const data = await res.json();
+        toast({
+          title: "Scenario: S3 Exposure",
+          description: `${data.alerts_injected} alerts → ${data.incidents_created} incident(s)`,
+        });
+        await loadIncidents(true);
+      } catch (err) {
+        toast({ title: "Scenario failed", description: String(err), variant: "destructive" });
+      } finally {
+        setRefreshing(false);
+      }
+    }}
+    disabled={refreshing}
+  >
+    <Sparkles className="h-4 w-4 mr-2" />
+    Demo: S3 Exposure
+  </Button>
+</div>
             </CardTitle>
             <CardDescription>
               Alerts grouped into incidents by resource overlap and time window.
