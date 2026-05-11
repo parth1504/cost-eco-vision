@@ -124,8 +124,9 @@ export function IncidentCoordinator() {
       if (!res.ok) throw new Error(`Backend returned ${res.status}`);
       const data: IncidentSummary[] = await res.json();
       setIncidents(data);
-      if (autoSelect && data.length > 0 && !selectedId) {
-        setSelectedId(data[0].incident_id);
+      const grouped = data.filter((i: IncidentSummary) => i.member_alert_ids.length >= 2);
+      if (autoSelect && grouped.length > 0 && !selectedId) {
+        setSelectedId(grouped[0].incident_id);
       }
     } catch (err) {
       console.error("Failed to load incidents:", err);
@@ -182,9 +183,10 @@ export function IncidentCoordinator() {
       if (!res.ok) throw new Error(`Backend returned ${res.status}`);
       const fresh: IncidentSummary[] = await res.json();
       setIncidents(fresh);
-      toast({ title: "Correlation refreshed", description: `Found ${fresh.length} incident(s).` });
-      if (fresh.length > 0) {
-        setSelectedId(fresh[0].incident_id);
+      const grouped = fresh.filter((i: IncidentSummary) => i.member_alert_ids.length >= 2);
+      toast({ title: "Correlation refreshed", description: `Found ${grouped.length} correlated incident(s).` });
+      if (grouped.length > 0) {
+        setSelectedId(grouped[0].incident_id);
       } else {
         setSelectedId(null);
         setDetail(null);
@@ -236,9 +238,14 @@ export function IncidentCoordinator() {
 
   // ----- helpers ----------------------------------------------------------
 
+  const groupedIncidents = useMemo(
+    () => incidents.filter(i => i.member_alert_ids.length >= 2),
+    [incidents]
+  );
+
   const selectedSummary = useMemo(
-    () => incidents.find(i => i.incident_id === selectedId) ?? null,
-    [incidents, selectedId]
+    () => groupedIncidents.find(i => i.incident_id === selectedId) ?? null,
+    [groupedIncidents, selectedId]
   );
 
   const getSeverityColor = (severity: string) => {
@@ -289,114 +296,42 @@ export function IncidentCoordinator() {
               <div className="flex items-center space-x-2">
                 <AlertTriangle className="h-5 w-5 text-primary" />
                 <span>Active Incidents</span>
-                <Badge variant="outline">{incidents.length}</Badge>
+                <Badge variant="outline">{groupedIncidents.length}</Badge>
               </div>
               <div className="flex flex-wrap gap-2">
-  <Button
-    size="sm"
-    variant="outline"
-    onClick={refreshCorrelation}
-    disabled={refreshing}
-  >
-    <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? "animate-spin" : ""}`} />
-    {refreshing ? "Working..." : "Re-run correlation"}
-  </Button>
-  <Button
-    size="sm"
-    variant="outline"
-    onClick={runLayer2}
-    disabled={refreshing || incidents.length === 0}
-    title="Use the AI to find cross-service incidents that deterministic rules missed"
-  >
-    <Sparkles className={`h-4 w-4 mr-2 ${refreshing ? "animate-pulse" : ""}`} />
-    AI cross-service
-  </Button>
-  <Button
-    size="sm"
-    variant="outline"
-    onClick={async () => {
-      setRefreshing(true);
-      try {
-        const res = await fetch(`${API}/incident/scenarios/iam_breach`, { method: "POST" });
-        const data = await res.json();
-        toast({
-          title: "Scenario: IAM Breach",
-          description: `${data.alerts_injected} alerts → ${data.incidents_created} incident(s)`,
-        });
-        await loadIncidents(true);
-      } catch (err) {
-        toast({ title: "Scenario failed", description: String(err), variant: "destructive" });
-      } finally {
-        setRefreshing(false);
-      }
-    }}
-    disabled={refreshing}
-  >
-    <Sparkles className="h-4 w-4 mr-2" />
-    Demo: IAM Breach
-  </Button>
-  <Button
-    size="sm"
-    variant="outline"
-    onClick={async () => {
-      setRefreshing(true);
-      try {
-        const res = await fetch(`${API}/incident/scenarios/cost_anomaly`, { method: "POST" });
-        const data = await res.json();
-        toast({
-          title: "Scenario: Cost Anomaly",
-          description: `${data.alerts_injected} alerts → ${data.incidents_created} incident(s)`,
-        });
-        await loadIncidents(true);
-      } catch (err) {
-        toast({ title: "Scenario failed", description: String(err), variant: "destructive" });
-      } finally {
-        setRefreshing(false);
-      }
-    }}
-    disabled={refreshing}
-  >
-    <Sparkles className="h-4 w-4 mr-2" />
-    Demo: Cost Spike
-  </Button>
-  <Button
-    size="sm"
-    variant="outline"
-    onClick={async () => {
-      setRefreshing(true);
-      try {
-        const res = await fetch(`${API}/incident/scenarios/security_exposure`, { method: "POST" });
-        const data = await res.json();
-        toast({
-          title: "Scenario: S3 Exposure",
-          description: `${data.alerts_injected} alerts → ${data.incidents_created} incident(s)`,
-        });
-        await loadIncidents(true);
-      } catch (err) {
-        toast({ title: "Scenario failed", description: String(err), variant: "destructive" });
-      } finally {
-        setRefreshing(false);
-      }
-    }}
-    disabled={refreshing}
-  >
-    <Sparkles className="h-4 w-4 mr-2" />
-    Demo: S3 Exposure
-  </Button>
-</div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={refreshCorrelation}
+                  disabled={refreshing}
+                >
+                  <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? "animate-spin" : ""}`} />
+                  {refreshing ? "Working..." : "Re-run correlation"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={runLayer2}
+                  disabled={refreshing || groupedIncidents.length === 0}
+                  title="Use the AI to find cross-service incidents that deterministic rules missed"
+                >
+                  <Sparkles className={`h-4 w-4 mr-2 ${refreshing ? "animate-pulse" : ""}`} />
+                  AI cross-service
+                </Button>
+              </div>
             </CardTitle>
             <CardDescription>
-              Alerts grouped into incidents by resource overlap and time window.
+              Related alerts grouped into correlated incidents. Only incidents with 2+ alerts are shown.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {incidents.length === 0 ? (
+            {groupedIncidents.length === 0 ? (
               <div className="text-sm text-muted-foreground py-4 text-center">
-                No incidents yet. Click <strong>Re-run correlation</strong> to build them from current alerts.
+                No correlated incidents found. Click <strong>Re-run correlation</strong> to group related alerts.
               </div>
             ) : (
               <div className="space-y-2">
-                {incidents.map(inc => (
+                {groupedIncidents.map(inc => (
                   <button
                     key={inc.incident_id}
                     onClick={() => setSelectedId(inc.incident_id)}
@@ -679,7 +614,7 @@ export function IncidentCoordinator() {
                               </p>
                             </div>
                             <Button
-                              onClick={() => window.open(`${API}/incident/report`, "_blank")}
+                              onClick={() => window.open(`${API}/incident/${selectedId}/report`, "_blank")}
                               className="w-full"
                               variant="outline"
                             >

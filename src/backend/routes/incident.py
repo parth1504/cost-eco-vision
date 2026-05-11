@@ -1,8 +1,8 @@
-from fastapi import APIRouter, Body, HTTPException, Response, Body
+from fastapi import APIRouter, Body, HTTPException, Response
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 import io
-from services.incident import get_incident_data
+from datetime import datetime
 from services.incidents import (
     get_incident_detail,
     list_incidents,
@@ -12,18 +12,10 @@ from services.incidents import (
 )
 from services.incident_agent import analyze_incident
 from services.correlation_layer2 import run_layer2_correlation
-from services.enhanced_alerts import generate_demo_scenario_alerts, get_available_scenarios
+from connections.db import get_incident
 
 router = APIRouter(prefix="/incident", tags=["incident"])
 
-
-@router.get("/data")
-def get_incident():
-    """[Legacy] Mock incident room data — kept until the new UI is wired up."""
-    return get_incident_data()
-
-
-# --- Real (correlation-backed) endpoints ---------------------------------
 
 @router.post("/refresh")
 async def refresh():
@@ -52,63 +44,6 @@ async def list_all(include_resolved: bool = True):
     """List all known incidents (most recent first)."""
     return await list_incidents(include_resolved=include_resolved)
 
-
-@router.get("/scenarios")
-def list_scenarios():
-    '''List available demo scenarios for the UI.'''
-    return get_available_scenarios()
- 
- 
-@router.post("/scenarios/{scenario_key}")
-async def inject_scenario(scenario_key: str):
-    '''
-    Inject a demo scenario's alerts into the system and run correlation.
-    Returns the resulting incidents — should show the alerts grouped
-    into meaningful multi-alert incidents.
-    '''
-    from services.enhanced_alerts import generate_demo_scenario_alerts
-    from connections.db import upsert_alert, set_alert_incident, upsert_incident
-    from services.correlation import correlate_alerts
-    from services.alerts import generate_alerts_from_resources
- 
-    # 1. Get real alerts
-    real_alerts = await generate_alerts_from_resources()
- 
-    # 2. Generate scenario alerts
-    scenario_alerts = generate_demo_scenario_alerts(scenario_key)
-    if not scenario_alerts:
-        raise HTTPException(status_code=404, detail=f"Scenario '{scenario_key}' not found")
- 
-    # 3. Combine real + scenario alerts
-    all_alerts = real_alerts + scenario_alerts
- 
-    # 4. Persist all alerts
-    for a in all_alerts:
-        if a.get("id"):
-            upsert_alert({**a, "alert_id": a["id"]})
- 
-    # 5. Correlate
-    incidents = correlate_alerts(all_alerts)
- 
-    # 6. Persist incidents
-    for inc in incidents:
-        upsert_incident(inc)
-        for alert_id in inc.get("member_alert_ids", []):
-            set_alert_incident(alert_id, inc["incident_id"])
- 
-    # 7. Return only incidents that contain scenario alerts
-    scenario_alert_ids = {a["id"] for a in scenario_alerts}
-    scenario_incidents = [
-        inc for inc in incidents
-        if any(aid in scenario_alert_ids for aid in inc.get("member_alert_ids", []))
-    ]
- 
-    return {
-        "scenario": scenario_key,
-        "alerts_injected": len(scenario_alerts),
-        "incidents_created": len(scenario_incidents),
-        "incidents": scenario_incidents,
-    }
 
 @router.get("/{incident_id}")
 async def get_one(incident_id: str):
@@ -158,35 +93,124 @@ async def analyze(incident_id: str, force: bool = False):
     return analysis
 
 
-@router.get("/report")
-def generate_incident_report():
+@router.get("/{incident_id}/report")
+async def generate_incident_report(incident_id: str):
+    """Generate a PDF report from real incident data."""
+    incident = get_incident(incident_id)
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    detail = await get_incident_detail(incident_id)
+    analysis = incident.get("analysis") or {}
+    root_cause = analysis.get("rootCause") or {}
+    checklist = analysis.get("checklist") or []
+    timeline = detail.get("timeline") or []
+
     buffer = io.BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=letter)
+    width, height = letter
+    margin = 50
+    y = height - margin
 
-    pdf.setFont("Helvetica-Bold", 16)
-    pdf.drawString(50, 750, "Incident Report – Public S3 Bucket Access")
+    def write_line(text: str, font="Helvetica", size=11, indent=0):
+        nonlocal y
+        if y < 60:
+            pdf.showPage()
+            y = height - margin
+        pdf.setFont(font, size)
+        pdf.drawString(margin + indent, y, text)
+        y -= size + 4
 
-    pdf.setFont("Helvetica", 12)
-    y = 720
+    def write_section(title: str):
+        nonlocal y
+        y -= 8
+        write_line(title, font="Helvetica-Bold", size=13)
+        y -= 2
 
-    sections = [
-        "Incident ID: INC-2024-001",
-        "Severity: CRITICAL",
-        "Primary Cause: Public READ ACL on S3 bucket backup-storage-0189",
-        "Contributing Factors:",
-        "- Block Public Access disabled",
-        "- Anonymous AllUsers READ permission",
-        "- Missing encryption",
-        "Immediate Actions:",
-        "- Removed public ACL",
-        "- Enabled Block Public Access",
-        "- Enabled SSE-S3 encryption",
-        "Resolution: Confirmed by IAM Analyzer",
-    ]
+    # Header
+    write_line("Incident Report", font="Helvetica-Bold", size=18)
+    write_line(
+        f"Generated {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
+        size=9,
+    )
+    y -= 10
 
-    for line in sections:
-        pdf.drawString(50, y, line)
-        y -= 20
+    # Summary
+    write_section("Summary")
+    write_line(f"Incident ID:  {incident_id}")
+    write_line(f"Title:  {incident.get('title', 'N/A')}")
+    write_line(f"Severity:  {(incident.get('severity') or 'N/A').upper()}")
+    write_line(f"Status:  {(incident.get('status') or 'open').capitalize()}")
+    write_line(f"Category:  {(incident.get('category') or 'N/A').capitalize()}")
+    resources = incident.get("resources_affected") or []
+    write_line(f"Affected Resources:  {', '.join(resources) if resources else 'N/A'}")
+    write_line(f"Alerts in Incident:  {len(incident.get('member_alert_ids', []))}")
+
+    # Lifecycle timestamps
+    for field, label in [
+        ("created_at", "Created"),
+        ("investigating_at", "Investigation Started"),
+        ("mitigated_at", "Mitigated"),
+        ("resolved_at", "Resolved"),
+    ]:
+        val = incident.get(field) or detail.get(field)
+        if val:
+            write_line(f"{label}:  {val}")
+
+    # Timeline
+    if timeline:
+        write_section("Alert Timeline")
+        for event in timeline:
+            ts = event.get("timestamp", "")
+            try:
+                ts_fmt = datetime.fromisoformat(ts.rstrip("Z")).strftime("%H:%M:%S")
+            except Exception:
+                ts_fmt = ts[:19] if ts else "N/A"
+            sev = (event.get("severity") or "").upper()
+            msg = event.get("message") or ""
+            write_line(f"[{ts_fmt}]  [{sev}]  {msg[:90]}", size=10, indent=10)
+
+    # Root Cause Analysis
+    if root_cause:
+        write_section("Root Cause Analysis")
+        if root_cause.get("primaryCause"):
+            write_line("Primary Cause:", font="Helvetica-Bold", size=11)
+            write_line(f"  {root_cause['primaryCause']}", indent=10)
+
+        factors = root_cause.get("contributingFactors") or []
+        if factors:
+            y -= 4
+            write_line("Contributing Factors:", font="Helvetica-Bold", size=11)
+            for f in factors:
+                write_line(f"  - {f}", indent=10, size=10)
+
+        actions = root_cause.get("immediateActions") or []
+        if actions:
+            y -= 4
+            write_line("Immediate Actions:", font="Helvetica-Bold", size=11)
+            for a in actions:
+                write_line(f"  - {a}", indent=10, size=10)
+
+        if root_cause.get("confidence") is not None:
+            write_line(f"AI Confidence: {root_cause['confidence']}%", size=10)
+
+    # Mitigation Checklist
+    if checklist:
+        write_section("Mitigation Checklist")
+        for item in checklist:
+            status = "DONE" if item.get("completed") else "TODO"
+            write_line(f"  [{status}]  {item.get('task', '')}", indent=10, size=10)
+
+    # Resolution summary
+    write_section("Resolution")
+    status = (incident.get("status") or "open").lower()
+    if status == "resolved":
+        write_line("This incident has been marked as resolved.")
+        resolved_at = incident.get("resolved_at")
+        if resolved_at:
+            write_line(f"Resolved at: {resolved_at}")
+    else:
+        write_line(f"Current status: {status.capitalize()}. Incident is not yet resolved.")
 
     pdf.showPage()
     pdf.save()
@@ -194,5 +218,8 @@ def generate_incident_report():
 
     return Response(
         content=buffer.getvalue(),
-        media_type="application/pdf"
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="incident-report-{incident_id}.pdf"'
+        },
     )

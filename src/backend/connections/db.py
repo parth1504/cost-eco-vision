@@ -12,8 +12,6 @@ load_dotenv()
 dynamodb =  boto3.resource("dynamodb")
 # DynamoDB table references
 recommendations_table = dynamodb.Table("Recommendations")
-alerts_table = dynamodb.Table("Alerts")
-incidents_table = dynamodb.Table("Incidents")
 security_triage_table = dynamodb.Table("SecurityTriage")
 descriptions_table = dynamodb.Table("Descriptions")
 
@@ -95,87 +93,18 @@ def update_resource_status(resource_id, resource_type, new_status):
 
 
 # =============================================================================
-# Alerts table
+# Alerts + Incidents — delegated to in-memory store
+# (no separate DynamoDB tables; derived from Recommendations at runtime)
 # =============================================================================
 
-def upsert_alert(alert: dict):
-    """Persist an alert (idempotent — same alert_id overwrites)."""
-    item = convert_floats({**alert, "last_seen_time": datetime.utcnow().isoformat()})
-    try:
-        alerts_table.put_item(Item=item)
-    except ClientError as e:
-        if e.response["Error"]["Code"] == "ResourceNotFoundException":
-            print("[db] Alerts table missing — run scripts/setup_dynamodb.py")
-            return None
-        raise
-    return item
-
-
-def get_alerts_for_incident(incident_id: str):
-    """Use the GSI to fetch all alerts that belong to a given incident."""
-    try:
-        response = alerts_table.query(
-            IndexName="incident_id-index",
-            KeyConditionExpression="incident_id = :iid",
-            ExpressionAttributeValues={":iid": incident_id},
-        )
-        return response.get("Items", [])
-    except ClientError as e:
-        if e.response["Error"]["Code"] == "ResourceNotFoundException":
-            return []
-        raise
-
-
-def set_alert_incident(alert_id: str, incident_id: str):
-    """Tag an alert with its incident membership."""
-    try:
-        alerts_table.update_item(
-            Key={"alert_id": alert_id},
-            UpdateExpression="SET incident_id = :iid",
-            ExpressionAttributeValues={":iid": incident_id},
-        )
-    except ClientError as e:
-        if e.response["Error"]["Code"] == "ResourceNotFoundException":
-            return
-        raise
-
-
-# =============================================================================
-# Incidents table
-# =============================================================================
-
-def upsert_incident(incident: dict):
-    """Persist or update an incident row."""
-    item = convert_floats({**incident, "updated_at": datetime.utcnow().isoformat()})
-    try:
-        incidents_table.put_item(Item=item)
-    except ClientError as e:
-        if e.response["Error"]["Code"] == "ResourceNotFoundException":
-            print("[db] Incidents table missing — run scripts/setup_dynamodb.py")
-            return None
-        raise
-    return item
-
-
-def get_incident(incident_id: str):
-    try:
-        response = incidents_table.get_item(Key={"incident_id": incident_id})
-        return response.get("Item")
-    except ClientError as e:
-        if e.response["Error"]["Code"] == "ResourceNotFoundException":
-            return None
-        raise
-
-
-def list_incidents():
-    """Scan all incidents (fine for small N; switch to a status-GSI if it grows)."""
-    try:
-        response = incidents_table.scan()
-        return response.get("Items", [])
-    except ClientError as e:
-        if e.response["Error"]["Code"] == "ResourceNotFoundException":
-            return []
-        raise
+from services.incident_store import (  # noqa: E402
+    upsert_alert,
+    get_alerts_for_incident,
+    set_alert_incident,
+    upsert_incident,
+    get_incident,
+    list_incidents,
+)
 
 
 # =============================================================================
