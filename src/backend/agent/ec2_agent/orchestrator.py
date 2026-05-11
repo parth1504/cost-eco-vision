@@ -31,7 +31,9 @@ Pipeline:
 
 from __future__ import annotations
 
+import json
 import logging
+import pathlib
 from typing import Any, Dict, List
 
 from agent.ec2_agent.agents import ALL_AGENTS
@@ -71,21 +73,35 @@ def run_sre_agent(resource: Dict[str, Any]) -> List[Dict[str, Any]]:
             recommendations.extend(agent_fn(bundle, signals))
         except Exception as e:  # pragma: no cover — never fail the whole run on a bad agent
             logger.warning("SRE agent %s failed: %s", agent_fn.__name__, e)
+    
+    # # 5. Safety + guardrails.
+    # recommendations = validate_and_filter(recommendations)
 
-    # 5. Safety + guardrails.
-    recommendations = validate_and_filter(recommendations)
-
-    # 6. Memory: annotate with history, suppress duplicates.
-    history = list(resource.get("recommendations") or [])
-    final: List = []
-    for rec in recommendations:
-        if not should_emit(rec, history):
-            logger.info("memory: suppressing %s (recent duplicate)", rec.rule_id)
-            continue
-        final.append(annotate_with_history(rec, history))
+    # # 6. Memory: annotate with history, suppress duplicates.
+    # history = list(resource.get("recommendations") or [])
+    # final: List = []
+    # for rec in recommendations:
+    #     if not should_emit(rec, history):
+    #         logger.info("memory: suppressing %s (recent duplicate)", rec.rule_id)
+    #         continue
+    #     final.append(annotate_with_history(rec, history))
 
     # 7. Rank + deduplicate.
-    final = rank(final)
+    final = rank(recommendations)
 
     # 8. Project to legacy dict shape.
-    return [to_legacy_dict(r) for r in final]
+    results = [to_legacy_dict(r) for r in final]
+
+    # 9. Log recommendations to file.
+    _log_to_file(resource, results)
+
+    return results
+
+
+def _log_to_file(resource: Dict[str, Any], recommendations: List[Dict[str, Any]]) -> None:
+    log_path = pathlib.Path("ec2_recs.txt")
+    instance_id = resource.get("id", "unknown")
+    with log_path.open("a", encoding="utf-8") as f:
+        f.write(f"=== {instance_id} ===\n")
+        f.write(json.dumps(recommendations, indent=2))
+        f.write("\n\n")

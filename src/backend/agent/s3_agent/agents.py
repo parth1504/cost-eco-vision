@@ -28,6 +28,10 @@ Architecture:
 """
 
 from __future__ import annotations
+import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 from typing import Any, Dict, List, Optional
 
@@ -773,11 +777,232 @@ def access_pattern_agent(
 
     return out
 
+# ---------------------------------------------------------------------------
+# Root Cause + Workload Intelligence Agent (LLM)
+# ---------------------------------------------------------------------------
 
+def root_cause_agent(
+    bundle: TelemetryBundle,
+    signals: List[Signal],
+) -> List[Recommendation]:
+
+    """
+    LLM-powered workload reasoning layer.
+
+    Purpose:
+        - correlate multiple S3 signals
+        - identify probable workload patterns
+        - explain storage anomalies
+        - identify lifecycle strategy gaps
+        - explain transfer-cost anomalies
+
+    IMPORTANT:
+        This agent NEVER generates direct boto3 actions.
+
+    The LLM is used ONLY for:
+        - operational explanation
+        - workload interpretation
+        - correlation reasoning
+    """
+
+    #
+    # Need enough signal density
+    #
+    if len(signals) < 2:
+        return []
+
+    signal_summary = [
+        {
+            "name": s.name,
+            "severity": s.severity.value,
+            "confidence": s.confidence,
+            "description": s.description,
+            "evidence": s.evidence,
+        }
+        for s in signals
+    ]
+
+    access_patterns = (
+        bundle.access_patterns or {}
+    )
+
+    trends = (
+        bundle.historical_trends or {}
+    )
+
+    prompt = (
+        "You are a senior cloud storage SRE.\n\n"
+
+        "Analyze the following S3 operational signals.\n"
+
+        "Focus on:\n"
+        "- workload access patterns\n"
+        "- lifecycle inefficiencies\n"
+        "- retrieval anomalies\n"
+        "- storage growth behavior\n"
+        "- transfer-cost patterns\n\n"
+
+        f"Signals:\n"
+        f"{json.dumps(signal_summary, default=str)}\n\n"
+
+        f"Access patterns:\n"
+        f"{json.dumps(access_patterns, default=str)}\n\n"
+
+        f"Historical trends:\n"
+        f"{json.dumps(trends, default=str)}\n\n"
+
+        "Return ONLY valid JSON:\n"
+        "{\n"
+        '  "title": "...",\n'
+        '  "summary": "...",\n'
+        '  "severity": "critical|high|medium|low",\n'
+        '  "confidence": 0.0-1.0,\n'
+        '  "root_cause": "...",\n'
+        '  "next_actions": ["...", "..."]\n'
+        "}\n"
+    )
+
+    try:
+
+        from agent.llm.llm_client import (
+            get_llm_client,
+        )
+
+        text = (
+            get_llm_client().generate(prompt)
+            or ""
+        )
+
+    except Exception as e:
+
+        logger.warning(
+            "S3 workload intelligence LLM failed: %s",
+            e,
+        )
+
+        return []
+
+    #
+    # Tolerant JSON extraction
+    #
+    try:
+
+        import re
+
+        fenced = re.search(
+            r"```(?:json)?\s*(\{.*?\})\s*```",
+            text,
+            re.DOTALL,
+        )
+
+        if fenced:
+            text = fenced.group(1)
+
+        else:
+
+            start = text.find("{")
+            end = text.rfind("}")
+
+            if start >= 0 and end > start:
+                text = text[start:end + 1]
+
+        parsed = json.loads(text)
+
+    except Exception:
+
+        logger.warning(
+            "S3 workload intelligence parse failed"
+        )
+
+        return []
+
+    sev = {
+        "critical": Severity.CRITICAL,
+        "high": Severity.HIGH,
+        "medium": Severity.MEDIUM,
+        "low": Severity.LOW,
+    }.get(
+        (
+            parsed.get("severity")
+            or "medium"
+        ).lower(),
+        Severity.MEDIUM,
+    )
+
+    return [
+        _build_rec(
+            rule_id="s3.root_cause.workload_analysis",
+
+            title=(
+                parsed.get("title")
+                or "S3 Workload Intelligence Analysis"
+            ),
+
+            rec_type=RecType.OPERATIONAL,
+
+            severity=sev,
+
+            category=RecCategory.WARNING,
+
+            confidence=float(
+                parsed.get("confidence")
+                or 0.5
+            ),
+
+            description=(
+                parsed.get("summary")
+                or "AI-generated workload analysis."
+            ),
+
+            issue=(
+                parsed.get("root_cause")
+                or parsed.get("summary")
+                or ""
+            ),
+
+            reasoning=(
+                parsed.get("summary")
+                or ""
+            ),
+
+            supporting_signals=signals,
+
+            impact="medium",
+
+            blast_radius="bucket",
+
+            operational_risk="low",
+
+            retrieval_impact=(
+                "Review workload access behavior before "
+                "applying lifecycle optimizations."
+            ),
+
+            durability_impact=(
+                "No direct durability risk identified."
+            ),
+
+            rollback="No rollback required.",
+
+            manual_only=True,
+
+            solution_steps=[
+                {
+                    "step": i + 1,
+                    "command": "Manual action",
+                    "description": action,
+                }
+                for i, action in enumerate(
+                    parsed.get("next_actions") or []
+                )
+            ],
+        )
+    ]
 ALL_AGENTS = [
     storage_utilization_agent,
     cost_optimization_agent,
     reliability_agent,
     security_agent,
     access_pattern_agent,
+    root_cause_agent,
 ]

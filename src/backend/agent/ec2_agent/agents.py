@@ -550,100 +550,345 @@ def security_agent(bundle: TelemetryBundle, signals: List[Signal]) -> List[Recom
 # Root Cause Correlation Agent (LLM)
 # ---------------------------------------------------------------------------
 
-def root_cause_agent(bundle: TelemetryBundle, signals: List[Signal]) -> List[Recommendation]:
-    """
-    Single-shot LLM call that builds a timeline narrative across signals
-    and operational events. Only runs when there's enough material — at
-    least 2 signals AND deployment/scaling events to correlate against.
+def root_cause_agent(
+    bundle: TelemetryBundle,
+    signals: List[Signal]
+) -> List[Recommendation]:
 
-    Output: ONE recommendation summarizing the most likely causal chain,
-    with the timeline embedded in `reasoning`.
     """
+    LLM-powered root-cause correlation engine.
+
+    Purpose:
+        Build a concise operational narrative
+        across:
+            - extracted signals
+            - deployments
+            - scaling events
+            - restarts
+            - failures
+
+    Output format intentionally mirrors
+    the legacy recommendation shape used
+    by the frontend.
+    """
+
+    #
+    # Need enough evidence
+    #
     if len(signals) < 2 or not bundle.events:
         return []
 
-    # Build compact context — never dump raw telemetry.
+    #
+    # Compact signal summary
+    # NEVER dump raw telemetry
+    #
     signal_summary = [
+
         {
-            "name": s.name,
-            "severity": s.severity.value,
-            "confidence": s.confidence,
-            "evidence": s.evidence,
-            "description": s.description,
+            "name":
+                s.name,
+
+            "severity":
+                s.severity.value,
+
+            "confidence":
+                s.confidence,
+
+            "description":
+                s.description,
+
+            "evidence":
+                s.evidence,
         }
+
         for s in signals
     ]
-    event_summary = bundle.events[-10:]  # most recent 10 events
 
+    #
+    # Most recent operational events
+    #
+    event_summary = bundle.events[-10:]
+
+    #
+    # Prompt
+    #
     prompt = (
-        "You are a senior SRE doing root-cause correlation. Given:\n"
-        f"  - signals (already extracted from telemetry): {json.dumps(signal_summary, default=str)}\n"
-        f"  - operational events (recent): {json.dumps(event_summary, default=str)}\n\n"
-        "Construct a SHORT timeline-based explanation. Return JSON only:\n"
+
+        "You are a senior Site Reliability Engineer "
+        "performing production root-cause analysis.\n\n"
+
+        "You are given:\n"
+
+        "1. Signals already extracted from telemetry\n"
+
+        "2. Operational events "
+        "(deployments, scaling, restarts, incidents)\n\n"
+
+        "Your job:\n"
+
+        "- infer the MOST likely causal chain\n"
+
+        "- build a SHORT operational timeline\n"
+
+        "- suggest next remediation actions\n\n"
+
+        "IMPORTANT:\n"
+
+        "- Return STRICT JSON only\n"
+
+        "- No markdown\n"
+
+        "- No explanations outside JSON\n\n"
+
+        f"SIGNALS:\n"
+        f"{json.dumps(signal_summary, default=str)}\n\n"
+
+        f"EVENTS:\n"
+        f"{json.dumps(event_summary, default=str)}\n\n"
+
+        "Return JSON in EXACTLY this shape:\n\n"
+
         "{\n"
+
         '  "title": "...",\n'
-        '  "primary_cause": "one sentence",\n'
-        '  "timeline": ["HH:MM event1", "HH:MM event2", ...],\n'
-        '  "confidence": 0.0-1.0,\n'
+
+        '  "description": "...",\n'
+
+        '  "issue": "...",\n'
+
         '  "severity": "critical|high|medium|low",\n'
-        '  "next_actions": ["...", "..."]\n'
-        "}\n"
-        "If you can't form a confident causal story, return {\"timeline\": []}."
+
+        '  "confidence": 0.0,\n'
+
+        '  "timeline": [\n'
+        '       "14:02 deployment started",\n'
+        '       "14:06 latency increased",\n'
+        '       "14:10 instance restarted"\n'
+        "  ],\n"
+
+        '  "impact": "low|medium|high",\n'
+
+        '  "blast_radius": "instance|service|cluster",\n'
+
+        '  "operational_risk": "low|medium|high",\n'
+
+        '  "next_actions": [\n'
+        '       "Rollback latest deployment",\n'
+        '       "Increase instance capacity"\n'
+        "  ]\n"
+
+        "}\n\n"
+
+        "If insufficient evidence exists return:\n"
+
+        '{"timeline": []}'
     )
 
+    #
+    # LLM call
+    #
     try:
-        from agent.llm.llm_client import get_llm_client
-        text = get_llm_client().generate(prompt) or ""
+
+        from agent.llm.llm_client import (
+            get_llm_client
+        )
+
+        text = (
+            get_llm_client()
+            .generate(prompt)
+            or ""
+        )
+
     except Exception as e:
-        logger.warning("Root cause LLM call failed: %s", e)
+
+        logger.warning(
+            "Root-cause LLM call failed: %s",
+            e,
+        )
+
         return []
 
-    # Tolerant JSON extraction — model may wrap in fences
+    #
+    # Tolerant JSON extraction
+    #
     import re
-    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+
+    fenced = re.search(
+        r"```(?:json)?\s*(\{.*?\})\s*```",
+        text,
+        re.DOTALL,
+    )
+
     if fenced:
+
         text = fenced.group(1)
+
     else:
+
         start = text.find("{")
         end = text.rfind("}")
+
         if start >= 0 and end > start:
             text = text[start:end + 1]
+
+    #
+    # Parse JSON
+    #
     try:
+
         parsed = json.loads(text)
+
     except Exception:
+
+        logger.warning(
+            "Failed to parse root-cause JSON"
+        )
+
         return []
 
+    #
+    # No confident timeline
+    #
     if not parsed.get("timeline"):
         return []
 
-    sev_str = (parsed.get("severity") or "medium").lower()
+    #
+    # Severity mapping
+    #
     sev = {
-        "critical": Severity.CRITICAL,
-        "high": Severity.HIGH,
-        "medium": Severity.MEDIUM,
-        "low": Severity.LOW,
-    }.get(sev_str, Severity.MEDIUM)
 
-    return [_build_rec(
-        rule_id="ec2.root_cause.timeline",
-        title=parsed.get("title") or "Correlated Root Cause Analysis",
-        rec_type=RecType.OPERATIONAL,
-        severity=sev,
-        category=RecCategory.WARNING,
-        confidence=float(parsed.get("confidence") or 0.5),
-        description=parsed.get("primary_cause") or "AI-correlated incident timeline.",
-        issue=parsed.get("primary_cause") or "",
-        reasoning="Timeline:\n" + "\n".join(parsed.get("timeline") or []),
-        supporting_signals=signals,
-        impact="high",
-        blast_radius="service",
-        operational_risk="low",
-        manual_only=True,
-        solution_steps=[
-            {"step": i + 1, "command": "Manual action", "description": a}
-            for i, a in enumerate(parsed.get("next_actions") or [])
-        ],
-    )]
+        "critical":
+            Severity.CRITICAL,
+
+        "high":
+            Severity.HIGH,
+
+        "medium":
+            Severity.MEDIUM,
+
+        "low":
+            Severity.LOW,
+
+    }.get(
+
+        (
+            parsed.get("severity")
+            or "medium"
+        ).lower(),
+
+        Severity.MEDIUM,
+    )
+
+    #
+    # Build frontend-compatible recommendation
+    #
+    return [
+
+        {
+            "title":
+                parsed.get("title")
+                or "Correlated Root Cause Analysis",
+
+            "description":
+                parsed.get("description")
+                or "AI-correlated operational incident timeline.",
+
+            "type":
+                "operational",
+
+            "severity":
+                sev.value,
+
+            "saving":
+                "N/A",
+
+            "issue":
+                parsed.get("issue")
+                or parsed.get("description")
+                or "Operational incident detected.",
+
+            "impact":
+                parsed.get("impact")
+                or "high",
+
+            "status":
+                "active",
+
+            #
+            # New SRE metadata
+            #
+            "reasoning":
+                "Timeline:\n"
+                + "\n".join(
+                    parsed.get("timeline") or []
+                ),
+
+            "supporting_signals": [
+                s.name
+                for s in signals
+            ],
+
+            "confidence":
+                float(
+                    parsed.get("confidence")
+                    or 0.5
+                ),
+
+            "blast_radius":
+                parsed.get("blast_radius")
+                or "service",
+
+            "operational_risk":
+                parsed.get("operational_risk")
+                or "medium",
+
+            "rollback":
+                "Rollback recent deployment or "
+                "revert operational change if applicable.",
+
+            #
+            # Actionable steps
+            #
+            "solution_steps": [
+
+                {
+                    "step": i + 1,
+
+                    "command":
+                        "Manual action",
+
+                    "description":
+                        action,
+                }
+
+                for i, action in enumerate(
+                    parsed.get("next_actions")
+                    or []
+                )
+            ],
+
+            #
+            # Manual only
+            #
+            "manual_only":
+                True,
+
+            #
+            # Root-cause recs
+            # should NEVER auto-execute
+            #
+            "boto3_sequence": [],
+
+            #
+            # Evidence
+            #
+            "evidence": {
+
+                s.name: s.evidence
+                for s in signals
+            },
+        }
+    ]
 
 
 ALL_AGENTS = [

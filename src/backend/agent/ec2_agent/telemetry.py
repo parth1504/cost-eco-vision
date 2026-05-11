@@ -75,36 +75,36 @@ def collect_from_resource(resource: Dict[str, Any]) -> TelemetryBundle:
 
     bundle = TelemetryBundle(
         instance_id=resource.get("resource_id") or resource.get("name") or "",
-        instance_type=config.get("instance_type") or "",
         region=resource.get("region") or "",
         state=resource.get("status") or "",
         launch_time=launch_time,
         tags=resource.get("tags") or {},
         monthly_cost=float(resource.get("monthly_cost") or 0),
-        is_spot=bool(config.get("is_spot")),
-        is_reserved=bool(config.get("is_reserved")),
+       
 
         cpu=_series_from_avg_max("cpu", cpu.get("avg_7d"), cpu.get("max_7d"), "%"),
+
         memory=_series_from_avg_max("memory", metrics.get("memory_avg_7d"), metrics.get("memory_max_7d"), "%"),
         swap=_series_from_avg_max("swap", metrics.get("swap_avg_7d"), metrics.get("swap_max_7d"), "%"),
         disk_used_pct=_series_from_avg_max("disk_used", metrics.get("disk_used_avg"), metrics.get("disk_used_max"), "%"),
-        disk_read_iops=_series_from_avg_max("disk_read_iops", disk.get("read_avg_7d"), disk.get("read_peak_7d"), "ops/s"),
-        disk_write_iops=_series_from_avg_max("disk_write_iops", disk.get("write_avg_7d"), disk.get("write_peak_7d"), "ops/s"),
         ebs_burst_balance=_series_from_avg_max("ebs_burst", metrics.get("ebs_burst_avg"), metrics.get("ebs_burst_min"), "%"),
-        network_in=_series_from_avg_max("net_in", network.get("in_avg_7d"), network.get("in_peak_7d"), "bytes/s"),
-        network_out=_series_from_avg_max("net_out", network.get("out_avg_7d"), network.get("out_peak_7d"), "bytes/s"),
         packet_drops=_series_from_avg_max("packet_drops", metrics.get("packet_drops_avg"), metrics.get("packet_drops_max")),
         tcp_connections=_series_from_avg_max("tcp_conn", metrics.get("tcp_conn_avg"), metrics.get("tcp_conn_max")),
         process_count=_series_from_avg_max("processes", metrics.get("process_avg"), metrics.get("process_max")),
+        p95_latency=_series_from_avg_max("p95_latency", metrics.get("p95_avg"), metrics.get("p95_max"), "ms"),
+        p99_latency=_series_from_avg_max("p99_latency", metrics.get("p99_avg"), metrics.get("p99_max"), "ms"),
         status_check_failed=_series_from_avg_max("status_check", health.get("status_check_failed_avg"), health.get("status_check_failed_max")),
         reboot_count_7d=int(resource.get("reboot_count_7d") or 0),
 
-        events=resource.get("events") or [],
-        log_signals=resource.get("log_signals") or {},
+        disk_read_iops=_series_from_avg_max("disk_read_iops", disk.get("read_avg_7d"), disk.get("read_peak_7d"), "ops/s"),
+        disk_write_iops=_series_from_avg_max("disk_write_iops", disk.get("write_avg_7d"), disk.get("write_peak_7d"), "ops/s"),
+        
+        network_in=_series_from_avg_max("net_in", network.get("in_avg_7d"), network.get("in_peak_7d"), "bytes/s"),
+        network_out=_series_from_avg_max("net_out", network.get("out_avg_7d"), network.get("out_peak_7d"), "bytes/s"),
 
-        p95_latency=_series_from_avg_max("p95_latency", metrics.get("p95_avg"), metrics.get("p95_max"), "ms"),
-        p99_latency=_series_from_avg_max("p99_latency", metrics.get("p99_avg"), metrics.get("p99_max"), "ms"),
-
+        is_spot=bool(config.get("is_spot")),
+        is_reserved=bool(config.get("is_reserved")),
+        
         imdsv2_required=config.get("imdsv2_required"),
         ebs_encrypted=config.get("ebs_encrypted"),
         public_ip=config.get("public_ip"),
@@ -113,6 +113,9 @@ def collect_from_resource(resource: Dict[str, Any]) -> TelemetryBundle:
 
         autoscaling_attached=config.get("autoscaling_attached"),
         autoscaling_az_count=config.get("autoscaling_az_count"),
+
+        events=resource.get("events") or [],
+        log_signals=resource.get("log_signals") or {},
     )
     return bundle
 
