@@ -1,14 +1,28 @@
 from fastapi import APIRouter, Body, HTTPException
-from typing import Dict, Any
+from typing import Dict, Any, List
 from decimal import Decimal
 from datetime import datetime
+from pydantic import BaseModel
 from services import resources
 from connections.db import get_resource_from_db, save_resource_in_db
 from aws.util import apply_aws_commands
 from services.resources import get_all_resources
+from agents.actions_agent import ActionsAgent
 
 
 router = APIRouter(prefix="/resources", tags=["resources"])
+actions_agent = ActionsAgent()
+
+
+class SelectedStep(BaseModel):
+    recommendation_index: int
+    step_indices: List[int]
+
+
+class ApplyFixesRequest(BaseModel):
+    resource_id: str
+    resource_type: str
+    selected_steps: List[SelectedStep]
 
 
 @router.get("")
@@ -91,3 +105,65 @@ async def optimize_resource_api(resource_id: str, data: dict = Body(...)):
     )
 
     return decimal_to_float(resource)
+
+
+@router.post("/apply-fixes")
+async def apply_selected_fixes(request: ApplyFixesRequest):
+    resource = get_resource_from_db(request.resource_id, request.resource_type)
+    if not resource:
+        raise HTTPException(status_code=404, detail="Resource not found")
+
+    recommendations = resource.get("recommendations", [])
+    if not recommendations:
+        raise HTTPException(status_code=400, detail="Resource has no recommendations")
+
+    selected_map = {
+        s.recommendation_index: s.step_indices for s in request.selected_steps
+    }
+
+    result = actions_agent.apply_selected_fixes(
+        resource_id=request.resource_id,
+        resource_type=request.resource_type,
+        recommendations=recommendations,
+        selected_step_indices=selected_map,
+    )
+
+    if result["status"] in ("completed", "partial_failure"):
+        for r in result.get("results", []):
+            rec_idx = r["recommendation_index"]
+            if rec_idx < len(recommendations):
+                recommendations[rec_idx]["status"] = (
+                    "resolved" if r["all_success"] else "active"
+                )
+                recommendations[rec_idx]["last_activity"] = (
+                    datetime.utcnow().isoformat() + "Z"
+                )
+
+        all_resolved = all(
+            rec.get("status") == "resolved" for rec in recommendations
+        )
+        if all_resolved:
+            resource["status"] = "optimized"
+
+        save_resource_in_db(
+            resource_id=request.resource_id,
+            resource_type=request.resource_type,
+            resource_data=resource,
+        )
+
+    return decimal_to_float(result)
+
+
+@router.post("/preview-fixes")
+async def preview_fixes(request: ApplyFixesRequest):
+    resource = get_resource_from_db(request.resource_id, request.resource_type)
+    if not resource:
+        raise HTTPException(status_code=404, detail="Resource not found")
+
+    recommendations = resource.get("recommendations", [])
+    selected_map = {
+        s.recommendation_index: s.step_indices for s in request.selected_steps
+    }
+
+    plan = actions_agent.preview_plan(recommendations, selected_map)
+    return plan

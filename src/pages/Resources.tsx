@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
-import { Server, Database, HardDrive, Zap, BarChart3, DollarSign, TrendingUp, Settings2, Calendar, Clock } from "lucide-react";
+import { Server, Database, HardDrive, Zap, BarChart3, DollarSign, TrendingUp, Settings2, Calendar, Clock, CheckSquare, Square, Loader2, Shield } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,8 @@ import { Resource } from "@/lib/mockData";
 import { useToast } from "@/hooks/use-toast";
 import { InfraGuardian } from "@/components/advanced/InfraGuardian";
 import { cn } from "@/lib/utils";
-// Removed Supabase import - now using FastAPI
+
+type SelectedStepsMap = Record<number, Set<number>>;
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -65,7 +66,114 @@ export function Resources() {
   const [maintenanceDate, setMaintenanceDate] = useState<Date>();
   const [recurrence, setRecurrence] = useState<string>("");
   const [maintenanceSuccess, setMaintenanceSuccess] = useState(false);
+  const [selectedSteps, setSelectedSteps] = useState<SelectedStepsMap>({});
+  const [applyingFixes, setApplyingFixes] = useState(false);
+  const [fixResults, setFixResults] = useState<any>(null);
   const { toast } = useToast();
+
+  const toggleStep = useCallback((recIdx: number, stepIdx: number) => {
+    setSelectedSteps(prev => {
+      const next = { ...prev };
+      const steps = new Set(prev[recIdx] || []);
+      if (steps.has(stepIdx)) {
+        steps.delete(stepIdx);
+      } else {
+        steps.add(stepIdx);
+      }
+      if (steps.size === 0) {
+        delete next[recIdx];
+      } else {
+        next[recIdx] = steps;
+      }
+      return next;
+    });
+  }, []);
+
+  const totalSelectedCount = Object.values(selectedSteps).reduce(
+    (sum, s) => sum + s.size, 0
+  );
+
+  const handleApplySelectedFixes = async () => {
+    if (!selectedResource || totalSelectedCount === 0) return;
+
+    setApplyingFixes(true);
+    setFixResults(null);
+
+    const payload = {
+      resource_id: selectedResource.id,
+      resource_type: selectedResource.type,
+      selected_steps: Object.entries(selectedSteps).map(([recIdx, stepSet]) => ({
+        recommendation_index: Number(recIdx),
+        step_indices: Array.from(stepSet).sort(),
+      })),
+    };
+
+    try {
+      const response = await fetch("http://localhost:8000/resources/apply-fixes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || `Server returned ${response.status}`);
+      }
+
+      const result = await response.json();
+      setFixResults(result);
+
+      if (result.status === "completed") {
+        toast({
+          title: "Fixes Applied Successfully",
+          description: `All ${totalSelectedCount} selected steps executed.`,
+        });
+
+        const updatedRes = await fetch("http://localhost:8000/resources");
+        if (updatedRes.ok) {
+          const data = await updatedRes.json();
+          const transformed = data.map((r: any) => ({
+            id: r.resource_id,
+            name: r.name,
+            type: r.resource_type,
+            status: r.status,
+            utilization: r.utilization,
+            monthly_cost: r.monthly_cost,
+            region: r.region,
+            recommendations: r.recommendations,
+            lastActivity: r.last_activity,
+            provider: r.provider,
+            commands: r.commands,
+          }));
+          setResources(transformed);
+          const updated = transformed.find((r: any) => r.id === selectedResource.id);
+          if (updated) setSelectedResource(updated);
+        }
+      } else if (result.status === "partial_failure") {
+        toast({
+          title: "Partial Success",
+          description: "Some steps failed. Check results for details.",
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Validation Failed",
+          description: result.errors?.[0] || "Could not validate selected steps.",
+          variant: "destructive",
+        });
+      }
+
+      setSelectedSteps({});
+    } catch (error: any) {
+      toast({
+        title: "Error Applying Fixes",
+        description: error.message || "Failed to apply fixes",
+        variant: "destructive",
+      });
+    } finally {
+      setApplyingFixes(false);
+    }
+  };
 
   // Fetch resources from FastAPI backend
   useEffect(() => {
@@ -412,6 +520,8 @@ export function Resources() {
           setMaintenanceType("");
           setMaintenanceDate(undefined);
           setRecurrence("");
+          setSelectedSteps({});
+          setFixResults(null);
         }
       }}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -501,132 +611,197 @@ export function Resources() {
                     </CardContent>
                   </Card>
 
-                  {/* AI Recommendations */}
+                  {/* AI Recommendations with Checkboxes */}
                   <Card>
-  <CardHeader>
-    <CardTitle className="text-base flex items-center space-x-2">
-      <Settings2 className="h-4 w-4" />
-      <span>AI Recommendations</span>
-    </CardTitle>
-  </CardHeader>
-
-  <CardContent className="max-w-[600px] overflow-x-auto pr-2">
-    <div className="space-y-4">
-      {selectedResource.recommendations.map((rec, idx) => (
-        <div key={idx} className="p-3 bg-muted/30 rounded-lg border border-border/40">
-          {/* Header row: title + savings */}
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="text-sm font-semibold text-foreground">{rec.title}</p>
-
-              {/* Badges */}
-              <div className="flex items-center gap-2 mt-2">
-                <span
-                  className={`px-2 py-0.5 rounded text-[10px] font-medium uppercase ${
-                    rec.severity === "critical"
-                      ? "bg-red-600/20 text-red-600"
-                      : rec.severity === "warning"
-                      ? "bg-yellow-500/20 text-yellow-700"
-                      : rec.severity === "resolved"
-                      ? "bg-green-500/20 text-green-700"
-                      : "bg-blue-500/20 text-blue-600"
-                  }`}
-                >
-                  {rec.severity}
-                </span>
-
-                <span
-                  className={`px-2 py-0.5 rounded text-[10px] font-medium camelcase ${
-                    rec.impact === "high"
-                      ? "bg-red-500/15 text-red-500"
-                      : rec.impact === "medium"
-                      ? "bg-yellow-500/15 text-yellow-600"
-                      : "bg-green-500/15 text-green-600"
-                  }`}
-                >
-                  Impact: {rec.impact}
-                </span>
-
-                {/* estimated savings */}
-                <span className="ml-2 text-xs text-primary font-medium">
-                  {rec.saving !== "N/A" ? `$${rec.saving}/mo` : "Savings: N/A"}
-                </span>
-              </div>
-            </div>
-
-            {/* optional: severity icon / small metadata */}
-            <div className="text-right text-xs text-muted-foreground">
-              <div>Type: {rec.type}</div>
-            </div>
-          </div>
-
-          {/* Description */}
-          {rec.description && (
-            <p className="mt-3 text-xs text-muted-foreground">{rec.description}</p>
-          )}
-
-          {/* Solution Steps */}
-          <div className="mt-3">
-            <p className="text-xs font-medium text-foreground mb-2">Solution Steps</p>
-
-            {rec.solution_steps && rec.solution_steps.length > 0 ? (
-              <div className="space-y-2">
-                {rec.solution_steps.map((step) => (
-                  <div
-                    key={step.step}
-                    className="p-3 bg-surface rounded-md border border-border/30"
-                    role="region"
-                    aria-label={`Step ${step.step} - ${step.description}`}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-[11px] font-semibold text-primary">
-                            Step {step.step}
-                          </span>
-                          <span className="text-sm font-medium text-foreground">{step.description}</span>
-                        </div>
-
-                       
+                    <CardHeader>
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="text-base flex items-center space-x-2">
+                          <Settings2 className="h-4 w-4" />
+                          <span>AI Recommendations</span>
+                        </CardTitle>
+                        {totalSelectedCount > 0 && (
+                          <Badge className="bg-primary/10 text-primary border-primary/20">
+                            {totalSelectedCount} step{totalSelectedCount !== 1 ? "s" : ""} selected
+                          </Badge>
+                        )}
                       </div>
+                    </CardHeader>
 
-                     
-                    </div>
+                    <CardContent className="max-w-[600px] overflow-x-auto pr-2">
+                      <div className="space-y-4">
+                        {selectedResource.recommendations.map((rec, recIdx) => {
+                          const isResolved = rec.status === "resolved";
+                          return (
+                            <div
+                              key={recIdx}
+                              className={cn(
+                                "p-3 rounded-lg border",
+                                isResolved
+                                  ? "bg-green-500/5 border-green-500/20 opacity-70"
+                                  : "bg-muted/30 border-border/40"
+                              )}
+                            >
+                              {/* Header row */}
+                              <div className="flex items-start justify-between gap-4">
+                                <div>
+                                  <p className="text-sm font-semibold text-foreground">{rec.title}</p>
+                                  <div className="flex items-center gap-2 mt-2">
+                                    <span
+                                      className={`px-2 py-0.5 rounded text-[10px] font-medium uppercase ${
+                                        rec.severity === "critical"
+                                          ? "bg-red-600/20 text-red-600"
+                                          : rec.severity === "warning"
+                                          ? "bg-yellow-500/20 text-yellow-700"
+                                          : rec.severity === "resolved"
+                                          ? "bg-green-500/20 text-green-700"
+                                          : "bg-blue-500/20 text-blue-600"
+                                      }`}
+                                    >
+                                      {rec.severity}
+                                    </span>
+                                    <span
+                                      className={`px-2 py-0.5 rounded text-[10px] font-medium ${
+                                        rec.impact === "high"
+                                          ? "bg-red-500/15 text-red-500"
+                                          : rec.impact === "medium"
+                                          ? "bg-yellow-500/15 text-yellow-600"
+                                          : "bg-green-500/15 text-green-600"
+                                      }`}
+                                    >
+                                      Impact: {rec.impact}
+                                    </span>
+                                    <span className="ml-2 text-xs text-primary font-medium">
+                                      {rec.saving !== "N/A" ? `$${rec.saving}/mo` : "Savings: N/A"}
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="text-right text-xs text-muted-foreground">
+                                  <div>Type: {rec.type}</div>
+                                </div>
+                              </div>
 
-                    {/* command block */}
-                    <code
-                      className="block text-xs bg-muted px-3 py-2 rounded mt-2 font-mono text-muted-foreground overflow-auto"
-                      style={{ whiteSpace: "pre-wrap" }}
-                    >
-                      {formatCommand(step.command)}
-                    </code>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">No automated steps available.</p>
-            )}
-          </div>
-        </div>
-      ))}
-    </div>
-  </CardContent>
-</Card>
+                              {rec.description && (
+                                <p className="mt-3 text-xs text-muted-foreground">{rec.description}</p>
+                              )}
 
+                              {/* Solution Steps with Checkboxes */}
+                              <div className="mt-3">
+                                <p className="text-xs font-medium text-foreground mb-2">Solution Steps</p>
 
-                  {/* Actions */}
+                                {rec.solution_steps && rec.solution_steps.length > 0 ? (
+                                  <div className="space-y-2">
+                                    {rec.solution_steps.map((step, stepIdx) => {
+                                      const isSelected = selectedSteps[recIdx]?.has(stepIdx) ?? false;
+                                      return (
+                                        <div
+                                          key={step.step}
+                                          className={cn(
+                                            "p-3 rounded-md border cursor-pointer transition-all",
+                                            isResolved
+                                              ? "bg-green-500/5 border-green-500/20 cursor-default"
+                                              : isSelected
+                                              ? "bg-primary/5 border-primary/30 ring-1 ring-primary/20"
+                                              : "bg-surface border-border/30 hover:border-primary/20"
+                                          )}
+                                          onClick={() => {
+                                            if (!isResolved) toggleStep(recIdx, stepIdx);
+                                          }}
+                                          role="checkbox"
+                                          aria-checked={isSelected}
+                                          aria-label={`Step ${step.step} - ${step.description}`}
+                                        >
+                                          <div className="flex items-start gap-3">
+                                            <div className="mt-0.5 flex-shrink-0">
+                                              {isResolved ? (
+                                                <CheckSquare className="h-4 w-4 text-green-600" />
+                                              ) : isSelected ? (
+                                                <CheckSquare className="h-4 w-4 text-primary" />
+                                              ) : (
+                                                <Square className="h-4 w-4 text-muted-foreground" />
+                                              )}
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                              <div className="flex items-center gap-2">
+                                                <span className="text-[11px] font-semibold text-primary">
+                                                  Step {step.step}
+                                                </span>
+                                                <span className="text-sm font-medium text-foreground">
+                                                  {step.description}
+                                                </span>
+                                              </div>
+                                              <code
+                                                className="block text-xs bg-muted px-3 py-2 rounded mt-2 font-mono text-muted-foreground overflow-auto"
+                                                style={{ whiteSpace: "pre-wrap" }}
+                                              >
+                                                {formatCommand(step.command)}
+                                              </code>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                ) : (
+                                  <p className="text-sm text-muted-foreground">No automated steps available.</p>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  {/* Execution Results */}
+                  {fixResults && (
+                    <Card className={fixResults.status === "completed" ? "border-green-500/30" : "border-yellow-500/30"}>
+                      <CardContent className="p-4">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Shield className="h-4 w-4" />
+                          <span className="text-sm font-semibold">
+                            {fixResults.status === "completed" ? "All Fixes Applied" : "Execution Results"}
+                          </span>
+                        </div>
+                        {fixResults.results?.map((r: any, i: number) => (
+                          <div key={i} className="text-xs mt-1">
+                            <span className={r.all_success ? "text-green-600" : "text-yellow-600"}>
+                              {r.all_success ? "OK" : "PARTIAL"}
+                            </span>
+                            {" — "}{r.recommendation}
+                          </div>
+                        ))}
+                        {fixResults.validation_warnings?.map((w: string, i: number) => (
+                          <div key={`w-${i}`} className="text-xs text-yellow-600 mt-1">
+                            Warning: {w}
+                          </div>
+                        ))}
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {/* Single Apply Selected Fixes Button */}
                   <div className="flex space-x-3">
-                    {selectedResource.status !== 'optimized' ? (
-                      <>
-                        <Button
-                          onClick={() => handleOptimize(selectedResource.id, "Right-sizing")}
-                          className="flex-1 action-success"
-                        >
-                          Apply Optimization
-                        </Button>
-                      </>
+                    {selectedResource.status !== "optimized" ? (
+                      <Button
+                        onClick={handleApplySelectedFixes}
+                        disabled={totalSelectedCount === 0 || applyingFixes}
+                        className="flex-1 action-success"
+                      >
+                        {applyingFixes ? (
+                          <>
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            Applying Fixes...
+                          </>
+                        ) : (
+                          <>
+                            <Shield className="h-4 w-4 mr-2" />
+                            Apply Selected Fixes
+                            {totalSelectedCount > 0 && ` (${totalSelectedCount})`}
+                          </>
+                        )}
+                      </Button>
                     ) : (
-                      <div className="flex items-center justify-center space-x-2 text-eco py-2">
+                      <div className="flex items-center justify-center space-x-2 text-eco py-2 w-full">
                         <TrendingUp className="h-5 w-5" />
                         <span className="font-medium">Resource Optimized</span>
                       </div>
