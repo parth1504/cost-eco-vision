@@ -82,22 +82,21 @@ def get_compliance_summary(region: str | None = None) -> Dict[str, Any]:
         subs = sh.get_enabled_standards().get("StandardsSubscriptions", [])
     except ClientError as e:
         code = e.response.get("Error", {}).get("Code", "")
-        if code in ("InvalidAccessException", "AccessDeniedException", "ResourceNotFoundException"):
-            return {
-                "enabled": False,
-                "message": (
-                    "AWS Security Hub is not enabled in this account/region. "
-                    "Enable it once and Security Hub will start evaluating your "
-                    "AWS resources against compliance standards (takes ~24h to "
-                    "fully populate)."
-                ),
-                "enable_command": (
-                    "aws securityhub enable-security-hub "
-                    "--enable-default-standards"
-                ),
-                "standards": [],
-            }
-        raise
+        print(f"Error checking Security Hub standards: {e}")
+        return {
+            "enabled": False,
+            "message": (
+                "AWS Security Hub is not enabled in this account/region. "
+                "Enable it once and Security Hub will start evaluating your "
+                "AWS resources against compliance standards (takes ~24h to "
+                "fully populate)."
+            ),
+            "enable_command": (
+                "aws securityhub enable-security-hub "
+                "--enable-default-standards"
+            ),
+            "standards": [],
+        }
 
     if not subs:
         return {

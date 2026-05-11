@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 # Flip this to True to enable the cache from code.
-USE_DESCRIPTION_CACHE: bool = False
+USE_DESCRIPTION_CACHE: bool = True
 
 
 def _cache_enabled() -> bool:

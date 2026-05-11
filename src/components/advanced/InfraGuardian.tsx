@@ -22,25 +22,83 @@ export function InfraGuardian() {
     fetchDriftData();
   }, []);
 
+  const handleFix = async (drift: any, direction: string) => {
+  try {
+    // Map frontend shape back to backend shape
+    const backendDrift = {
+      resource_id: drift.resource,
+      resource_type: drift.resourceType,
+      field: drift.driftType,
+      severity: drift.severity,
+      aws_value: drift.actualValue,
+      terraform_value: drift.expectedValue,
+      detected_at: drift.lastSync,
+    };
+
+    const response = await fetch("http://localhost:8000/drift/fix", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ 
+        drift: backendDrift,  // Send the mapped version
+        fix_direction: direction 
+      }),
+    });
+    
+    const data = await response.json();
+    
+    toast({
+      title: "✅ PR Created",
+      description: (
+        <Button
+          variant="link"
+          onClick={() => window.open(data.pr_url, "_blank")}
+        >
+          View PR #{data.pr_number}
+        </Button>
+      ),
+    });
+  } catch (err: any) {
+    toast({
+      title: "❌ Failed to create PR",
+      description: err.message,
+      variant: "destructive",
+    });
+  }
+};
+
   const fetchDriftData = async () => {
-    try {
-      console.log("🔄 Fetching drift data from backend...");
-      const response = await fetch("http://localhost:8000/drift/data");
-      
-      if (!response.ok) {
-        throw new Error(`Backend returned ${response.status}`);
-      }
-      
-      const data = await response.json();
-      console.log("✅ Successfully fetched drift data:", data);
-      setDrifts(data.drifts);
-    } catch (error) {
-      console.error("❌ Failed to fetch drift data:", error);
-      setDrifts([]);
-    } finally {
-      setLoading(false);
+  try {
+    console.log("🔄 Fetching drift data from backend...");
+    const response = await fetch("http://localhost:8000/drift/data");
+    
+    if (!response.ok) {
+      throw new Error(`Backend returned ${response.status}`);
     }
-  };
+    
+    const data = await response.json();
+    console.log("✅ Successfully fetched drift data:", data);
+
+    // Map backend shape → frontend shape
+    const mapped = (data.drifts || []).map((d: any, index: number) => ({
+      id: d.resource_id ? `${d.resource_type}-${d.resource_id}-${d.field}-${index}` : `drift-${index}`,
+      resource: d.resource_id || "Unknown",
+      resourceType: d.resource_type || "Unknown",
+      driftType: d.field || "Configuration",
+      severity: d.severity || "Low",
+      actualValue: d.aws_value || "N/A",          // FIXED
+      expectedValue: d.terraform_value || "N/A",  // FIXED
+      reason: d.reason || "",
+      lastSync: d.detected_at || new Date().toISOString(),
+    }));
+
+    setDrifts(mapped);
+  } catch (error) {
+    console.error("❌ Failed to fetch drift data:", error);
+    setDrifts([]);
+  } finally {
+    setLoading(false);
+  }
+};
 
   const getSeverityColor = (severity: string) => {
     switch (severity) {
@@ -117,6 +175,48 @@ export function InfraGuardian() {
               <GitBranch className="h-5 w-5 text-warning" />
               <span>Infrastructure Drift Detection</span>
             </CardTitle>
+            <CardHeader>
+  <div className="flex items-center justify-between">
+    <div>
+      <CardTitle className="flex items-center space-x-2">
+        <GitBranch className="h-5 w-5 text-warning" />
+        <span>Infrastructure Drift Detection</span>
+      </CardTitle>
+      <CardDescription>
+        Resources that have drifted from their defined Infrastructure as Code
+      </CardDescription>
+    </div>
+    <div className="flex items-center space-x-2">
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={async () => {
+          try {
+            const res = await fetch("http://localhost:8000/drift/baseline", {
+              method: "POST",
+            });
+            const data = await res.json();
+            toast({
+              title: "✅ Baseline Set",
+              description: "Current AWS state saved as baseline.",
+            });
+          } catch (err: any) {
+            toast({
+              title: "❌ Failed to set baseline",
+              description: err.message,
+              variant: "destructive",
+            });
+          }
+        }}
+      >
+        Set Baseline
+      </Button>
+      <Button size="sm" onClick={fetchDriftData}>
+        Check for Drift
+      </Button>
+    </div>
+  </div>
+</CardHeader>
             <CardDescription>
               Resources that have drifted from their defined Infrastructure as Code
             </CardDescription>
@@ -210,22 +310,32 @@ export function InfraGuardian() {
                           
                           <div className="p-4 bg-muted/30 rounded-lg">
                             <p className="text-sm">
-                              <strong>Impact:</strong> This drift affects {drift.driftType.toLowerCase()} compliance 
-                              and may introduce security vulnerabilities or cost inefficiencies.
+                              <strong>Impact:</strong> This drift affects {(drift.driftType || "configuration").toLowerCase()} compliance
+
                             </p>
                           </div>
                         </div>
                       </DialogContent>
                     </Dialog>
 
-                    <Button
-                      size="sm"
-                      onClick={() => handleAutoFix(drift.id)}
-                      className="action-success"
-                    >
-                      <GitBranch className="h-4 w-4 mr-2" />
-                      Auto-Fix Drift
-                    </Button>
+                   <div className="flex items-center space-x-2">
+  <Button
+    size="sm"
+    variant="outline"
+    onClick={() => handleFix(drift, "aws_to_terraform")}
+  >
+    <GitBranch className="h-4 w-4 mr-2" />
+    Update Terraform
+  </Button>
+  <Button
+    size="sm"
+    onClick={() => handleFix(drift, "terraform_to_aws")}
+    className="action-success"
+  >
+    <GitBranch className="h-4 w-4 mr-2" />
+    Apply Terraform
+  </Button>
+</div>
                   </div>
                 </div>
               ))}

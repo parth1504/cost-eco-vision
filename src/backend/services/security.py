@@ -34,58 +34,127 @@ def replace_placeholders(obj, mapping):
         return obj
 
 async def fetch_iam_access_keys():
+    """Fetch all IAM access keys with permission analysis and rotation tracking"""
     all_keys = []
-
+    print("Fetching IAM access keys...")
+ 
     users_resp = iam.list_users()
-
+ 
     for user in users_resp["Users"]:
         user_name = user["UserName"]
-
+ 
         # Get access keys for user
         access_keys = iam.list_access_keys(UserName=user_name)["AccessKeyMetadata"]
-
+ 
+        # Get user's attached policies (for permission analysis)
+        attached_policies = iam.list_attached_user_policies(UserName=user_name).get("AttachedPolicies", [])
+        policy_names = [p["PolicyName"] for p in attached_policies]
+        
+        # Flag overprivileged users
+        is_overprivileged = any(
+            "admin" in p.lower() or p == "AdministratorAccess" 
+            for p in policy_names
+        )
+ 
         for k in access_keys:
             key_id = k["AccessKeyId"]
-
+            created_date = k["CreateDate"].replace(tzinfo=timezone.utc)
+            days_since_created = (datetime.now(timezone.utc) - created_date).days
+ 
             # ---- GET LAST USED ----
             last_used_info = iam.get_access_key_last_used(AccessKeyId=key_id)
             last_used = last_used_info["AccessKeyLastUsed"].get("LastUsedDate")
-
+ 
             if last_used:
                 last_used_utc = last_used.replace(tzinfo=timezone.utc)
                 days_since_last_used = (datetime.now(timezone.utc) - last_used_utc).days
                 last_used_str = last_used_utc.isoformat()
             else:
-                # Key has NEVER been used → should be treated as UNUSED (NOT expired)
                 days_since_last_used = 999
                 last_used_str = "Never"
-
+ 
+            # ---- ROTATION STATUS ----
+            if days_since_created > 90:
+                rotation_status = "Overdue"
+                severity = "High"
+            elif days_since_created > 60:
+                rotation_status = "Due Soon"
+                severity = "Medium"
+            elif days_since_created < 30:
+                rotation_status = "Recently Rotated"
+                severity = "Low"
+            else:
+                rotation_status = "OK"
+                severity = "Low"
+ 
             # ---- STATUS LOGIC ----
             if last_used_str == "Never":
                 status = "Unused"
+                severity = "High"  # Unused keys are security risks
             elif days_since_last_used > 90:
-                status = "Unused"        # NOT expired
-            elif days_since_last_used > 30:
                 status = "Unused"
+                severity = "High"
+            elif days_since_created > 90:
+                status = "Needs Rotation"
+                severity = "High"
             else:
                 status = "Active"
-
-            # ---- EXPIRES IN (only for UI) ----
-            expires_in = max(0, 90 - days_since_last_used)
+ 
+            # ---- ISSUES (list of specific problems) ----
+            issues = []
+            if days_since_created > 90:
+                issues.append(f"Key is {days_since_created} days old (rotate every 90 days)")
+            if days_since_last_used > 90 and last_used_str != "Never":
+                issues.append(f"Not used in {days_since_last_used} days (consider deleting)")
             if last_used_str == "Never":
-                expires_in = 90
-
+                issues.append("Key has never been used (delete if unnecessary)")
+            if is_overprivileged:
+                issues.append(f"User has admin-level permissions ({', '.join(policy_names[:2])})")
+ 
+            # ---- RECOMMENDATIONS ----
+            recommendations = []
+            if days_since_created > 90:
+                recommendations.append({
+                    "action": "rotate",
+                    "title": "Rotate Access Key",
+                    "description": "Create new key, update applications, deactivate old key",
+                    "priority": "High"
+                })
+            if last_used_str == "Never" or days_since_last_used > 90:
+                recommendations.append({
+                    "action": "delete",
+                    "title": "Delete Unused Key",
+                    "description": "This key hasn't been used recently and can likely be deleted",
+                    "priority": "Medium"
+                })
+            if is_overprivileged:
+                recommendations.append({
+                    "action": "scope_down",
+                    "title": "Reduce Permissions",
+                    "description": f"User has {', '.join(policy_names)}. Review if admin access is necessary.",
+                    "priority": "High"
+                })
+ 
             all_keys.append({
                 "id": key_id,
-                "name": f"AWS IAM Access Key ({user_name})",
+                "name": f"IAM Access Key",
+                "user": user_name,
                 "type": "Access Key",
+                "provider": "AWS IAM",
+                "createdDate": created_date.isoformat(),
+                "ageInDays": days_since_created,
                 "lastUsed": last_used_str,
-                "expiresIn": expires_in,
-                "status": status
+                "daysSinceLastUsed": days_since_last_used if last_used_str != "Never" else None,
+                "rotationStatus": rotation_status,
+                "status": status,
+                "severity": severity,
+                "policies": policy_names,
+                "isOverprivileged": is_overprivileged,
+                "issues": issues,
+                "recommendations": recommendations,
             })
-
+ 
     return all_keys
-
 
 async def get_security_keys_dynamic():
     iam_keys = await fetch_iam_access_keys()
@@ -501,6 +570,169 @@ async def compute_dynamic_security_score():
 async def get_security_data():
     """Return comprehensive security data including keys, scores, and compliance"""
     return {
-        "keys": await get_security_keys_dynamic(),
-        "score":  await compute_dynamic_security_score(),
+        "keys": await get_security_keys_and_certs(),  # Changed from get_security_keys_dynamic()
+        "score": await compute_dynamic_security_score(),
+    }
+
+# ADD THESE FUNCTIONS TO YOUR EXISTING aws/security.py FILE
+# They work alongside your existing get_security_keys_dynamic() function
+
+async def fetch_acm_certificates(region="us-east-1"):
+    """Fetch ACM SSL/TLS certificates with expiry tracking"""
+    all_certs = []
+    
+    acm_client = boto3.client("acm", region_name=region)
+    
+    try:
+        certs_resp = acm_client.list_certificates(CertificateStatuses=["ISSUED"])
+        
+        for cert_summary in certs_resp.get("CertificateSummaryList", []):
+            cert_arn = cert_summary["CertificateArn"]
+            
+            # Get detailed cert info
+            cert_detail = acm_client.describe_certificate(CertificateArn=cert_arn)["Certificate"]
+            
+            domain_name = cert_detail.get("DomainName", "Unknown")
+            not_after = cert_detail.get("NotAfter")  # Expiry date
+            not_before = cert_detail.get("NotBefore")  # Issue date
+            
+            if not_after:
+                not_after_utc = not_after.replace(tzinfo=timezone.utc)
+                days_until_expiry = (not_after_utc - datetime.now(timezone.utc)).days
+            else:
+                days_until_expiry = 999
+            
+            if not_before:
+                not_before_utc = not_before.replace(tzinfo=timezone.utc)
+                cert_age_days = (datetime.now(timezone.utc) - not_before_utc).days
+            else:
+                cert_age_days = 0
+            
+            # Determine status and severity
+            if days_until_expiry < 0:
+                status = "Expired"
+                severity = "Critical"
+            elif days_until_expiry < 30:
+                status = "Expiring Soon"
+                severity = "High"
+            elif days_until_expiry < 60:
+                status = "Nearing Expiry"
+                severity = "Medium"
+            else:
+                status = "Valid"
+                severity = "Low"
+            
+            # Check if auto-renew is enabled (for ACM-managed certs with validation)
+            renewal_eligibility = cert_detail.get("RenewalEligibility", "INELIGIBLE")
+            auto_renew_enabled = renewal_eligibility == "ELIGIBLE"
+            
+            # Build issues list
+            issues = []
+            if days_until_expiry < 60 and not auto_renew_enabled:
+                issues.append(f"Certificate expires in {days_until_expiry} days and auto-renew is not enabled")
+            if days_until_expiry < 0:
+                issues.append("Certificate has expired")
+            if cert_age_days > 365:
+                issues.append(f"Certificate is {cert_age_days} days old (consider rotating)")
+            
+            # Recommendations
+            recommendations = []
+            if days_until_expiry < 60:
+                recommendations.append({
+                    "action": "renew",
+                    "title": "Renew Certificate",
+                    "description": "ACM certificates can be renewed automatically if DNS validation is configured",
+                    "priority": "High" if days_until_expiry < 30 else "Medium"
+                })
+            if not auto_renew_enabled:
+                recommendations.append({
+                    "action": "enable_auto_renew",
+                    "title": "Enable Auto-Renewal",
+                    "description": "Configure DNS validation to enable automatic renewal",
+                    "priority": "Medium"
+                })
+            
+            all_certs.append({
+                "id": cert_arn,
+                "name": f"SSL Certificate: {domain_name}",
+                "domain": domain_name,
+                "type": "SSL/TLS Certificate",
+                "provider": "AWS ACM",
+                "issuedDate": not_before.isoformat() if not_before else None,
+                "expiryDate": not_after.isoformat() if not_after else None,
+                "daysUntilExpiry": days_until_expiry,
+                "ageInDays": cert_age_days,
+                "status": status,
+                "severity": severity,
+                "autoRenewEnabled": auto_renew_enabled,
+                "issues": issues,
+                "recommendations": recommendations,
+            })
+    
+    except Exception as e:
+        print(f"Error fetching ACM certificates: {e}")
+    
+    return all_certs
+
+
+async def get_security_keys_and_certs(region="us-east-1"):
+    """Fetch all security keys and certificates"""
+    iam_keys = await fetch_iam_access_keys()
+    acm_certs = await fetch_acm_certificates(region)
+    
+    all_items = iam_keys + acm_certs
+    
+    # Summary stats
+    summary = {
+        "total": len(all_items),
+        "critical": sum(1 for item in all_items if item["severity"] == "Critical"),
+        "high": sum(1 for item in all_items if item["severity"] == "High"),
+        "medium": sum(1 for item in all_items if item["severity"] == "Medium"),
+        "low": sum(1 for item in all_items if item["severity"] == "Low"),
+        "needsRotation": sum(1 for item in all_items if item.get("rotationStatus") in ["Overdue", "Due Soon"]),
+        "unused": sum(1 for item in all_items if item.get("status") == "Unused"),
+        "overprivileged": sum(1 for item in all_items if item.get("isOverprivileged")),
+    }
+    
+    return {
+        "items": all_items,
+        "summary": summary
+    }
+
+
+async def rotate_iam_access_key(key_id: str, user_name: str):
+    """Create new key, return it to user, mark old key as inactive"""
+    
+    # Create new key
+    new_key_resp = iam.create_access_key(UserName=user_name)
+    new_key = new_key_resp["AccessKey"]
+    
+    # Mark old key as inactive (don't delete yet - give user time to update apps)
+    iam.update_access_key(
+        UserName=user_name,
+        AccessKeyId=key_id,
+        Status="Inactive"
+    )
+    
+    return {
+        "status": "rotated",
+        "newKeyId": new_key["AccessKeyId"],
+        "newSecretKey": new_key["SecretAccessKey"],
+        "oldKeyId": key_id,
+        "oldKeyStatus": "Inactive",
+        "message": f"New key created. Update your applications with the new key, then delete the old key ({key_id}).",
+        "nextSteps": [
+            "Update applications/services with new access key",
+            "Test that new key works",
+            "Delete old key after 7 days"
+        ]
+    }
+
+
+async def delete_iam_access_key(key_id: str, user_name: str):
+    """Delete an IAM access key"""
+    iam.delete_access_key(UserName=user_name, AccessKeyId=key_id)
+    return {
+        "status": "deleted",
+        "message": f"Access key {key_id} deleted successfully"
     }

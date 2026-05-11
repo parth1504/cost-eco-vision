@@ -1,0 +1,23 @@
+{
+  "sg-01b728cf9b4c5cb1c": {
+    "name": "default",
+    "description": "default VPC security group",
+    "vpc_id": "vpc-02efb79f1b0d0893b",
+    "ingress_rules": [
+      {
+        "protocol": "tcp",
+        "from_port": 9999,
+        "to_port": 9999,
+        "cidr": "0.0.0.0/0"
+      }
+    ],
+    "egress_rules": [
+      {
+        "protocol": "-1",
+        "from_port": 0,
+        "to_port": 0,
+        "cidr": "0.0.0.0/0"
+      }
+    ]
+  }
+}

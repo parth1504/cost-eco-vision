@@ -1,9 +1,17 @@
 from fastapi import APIRouter, Body, HTTPException
+from pydantic import BaseModel
+
 from services import security
-from services.security import get_security_data
+from services.security import (
+    get_security_data,
+    get_security_keys_and_certs,
+    rotate_iam_access_key,
+    delete_iam_access_key,
+)
 from services.compliance import get_compliance_summary
 from services.security_triage_agent import triage_findings
 from connections.db import get_security_triage
+
 router = APIRouter(prefix="/security", tags=["security"])
 
 
@@ -42,6 +50,62 @@ def get_compliance():
         return get_compliance_summary()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Compliance lookup failed: {e}")
+
+
+# ========== NEW: KEYS & CERTIFICATES MANAGEMENT ==========
+
+@router.get("/keys")
+async def get_keys_and_certs(region: str = "us-east-1"):
+    """
+    Get all security keys and certificates with detailed analysis:
+    - IAM access keys (with last used, rotation status, permissions)
+    - ACM SSL/TLS certificates (with expiry tracking)
+    """
+    try:
+        result = await get_security_keys_and_certs(region)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class RotateKeyRequest(BaseModel):
+    key_id: str
+    user_name: str
+
+
+@router.post("/keys/rotate")
+async def rotate_key(request: RotateKeyRequest):
+    """
+    Rotate an IAM access key.
+    Creates new key, marks old key as inactive.
+    User must update applications before deleting old key.
+    """
+    try:
+        result = await rotate_iam_access_key(request.key_id, request.user_name)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class DeleteKeyRequest(BaseModel):
+    key_id: str
+    user_name: str
+
+
+@router.post("/keys/delete")
+async def delete_key(request: DeleteKeyRequest):
+    """
+    Delete an unused IAM access key.
+    WARNING: This cannot be undone.
+    """
+    try:
+        result = await delete_iam_access_key(request.key_id, request.user_name)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ========== END NEW ROUTES ==========
 
 
 @router.post("/triage")
