@@ -526,7 +526,6 @@ def get_all_ec2_metrics(
     # Network
     #
     network_in = fetch_metric(
-        cloudwatch,
         "AWS/EC2",
         "NetworkIn",
         dimensions,
@@ -534,7 +533,6 @@ def get_all_ec2_metrics(
     )
 
     network_out = fetch_metric(
-        cloudwatch,
         "AWS/EC2",
         "NetworkOut",
         dimensions,
@@ -545,7 +543,6 @@ def get_all_ec2_metrics(
     # Packets
     #
     packets_in = fetch_metric(
-        cloudwatch,
         "AWS/EC2",
         "NetworkPacketsIn",
         dimensions,
@@ -553,7 +550,6 @@ def get_all_ec2_metrics(
     )
 
     packets_out = fetch_metric(
-        cloudwatch,
         "AWS/EC2",
         "NetworkPacketsOut",
         dimensions,
@@ -564,7 +560,6 @@ def get_all_ec2_metrics(
     # Disk
     #
     disk_read = fetch_metric(
-        cloudwatch,
         "AWS/EC2",
         "DiskReadOps",
         dimensions,
@@ -572,7 +567,6 @@ def get_all_ec2_metrics(
     )
 
     disk_write = fetch_metric(
-        cloudwatch,
         "AWS/EC2",
         "DiskWriteOps",
         dimensions,
@@ -583,7 +577,6 @@ def get_all_ec2_metrics(
     # Status checks
     #
     status_check = fetch_metric(
-        cloudwatch,
         "AWS/EC2",
         "StatusCheckFailed",
         dimensions,
@@ -594,7 +587,6 @@ def get_all_ec2_metrics(
     # CWAgent metrics
     #
     memory = fetch_metric(
-        cloudwatch,
         "CWAgent",
         "mem_used_percent",
         dimensions,
@@ -602,7 +594,6 @@ def get_all_ec2_metrics(
     )
 
     swap = fetch_metric(
-        cloudwatch,
         "CWAgent",
         "swap_used_percent",
         dimensions,
@@ -610,7 +601,6 @@ def get_all_ec2_metrics(
     )
 
     disk_used = fetch_metric(
-        cloudwatch,
         "CWAgent",
         "disk_used_percent",
         dimensions,
@@ -618,7 +608,6 @@ def get_all_ec2_metrics(
     )
 
     tcp_conn = fetch_metric(
-        cloudwatch,
         "CWAgent",
         "tcp_established",
         dimensions,
@@ -626,7 +615,6 @@ def get_all_ec2_metrics(
     )
 
     processes = fetch_metric(
-        cloudwatch,
         "CWAgent",
         "processes_total",
         dimensions,
