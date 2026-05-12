@@ -33,6 +33,8 @@ export function CostOptimization() {
   const [autoScalingLevel, setAutoScalingLevel] = useState([50]);
   const [storageOptEnabled, setStorageOptEnabled] = useState(true);
   const [projectedSavings, setProjectedSavings] = useState({ monthly: 0, yearly: 0, co2: 0, optimization_score: 0 });
+  const [sections, setSections] = useState<any>({});
+  const [implementationPlan, setImplementationPlan] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   
   const { toast } = useToast();
@@ -61,7 +63,7 @@ export function CostOptimization() {
       
       const data = await response.json();
       console.log("✅ Successfully fetched optimization data from backend");
-      
+
       if (data.config) {
         setIdleResourcesEnabled(data.config.idle_resources_enabled);
         setRightSizingLevel([data.config.right_sizing_level]);
@@ -69,9 +71,15 @@ export function CostOptimization() {
         setAutoScalingLevel([data.config.auto_scaling_level]);
         setStorageOptEnabled(data.config.storage_optimization_enabled);
       }
-      
+
       if (data.projections) {
         setProjectedSavings(data.projections);
+      }
+      if (data.sections) {
+        setSections(data.sections);
+      }
+      if (data.implementation_plan) {
+        setImplementationPlan(data.implementation_plan);
       }
     } catch (error) {
       console.error("❌ Failed to fetch from backend:", error);
@@ -143,6 +151,12 @@ export function CostOptimization() {
       if (data.projections) {
         setProjectedSavings(data.projections);
       }
+      if (data.sections) {
+        setSections(data.sections);
+      }
+      if (data.implementation_plan) {
+        setImplementationPlan(data.implementation_plan);
+      }
     } catch (error) {
       console.error("Failed to update projections:", error);
     }
@@ -162,7 +176,7 @@ export function CostOptimization() {
 
       toast({
         title: "🎉 Optimization Plan Applied!",
-        description: `Your plan will save $6/month and reduce CO₂ by 3 kgs annually.`,
+        description: `Your plan will save $${projectedSavings.monthly}/month and reduce CO₂ by ${projectedSavings.co2} kgs annually.`,
       });
     } catch (error) {
       console.error("Failed to apply optimization:", error);
@@ -217,10 +231,12 @@ export function CostOptimization() {
               <CardContent className="pt-0">
                 <div className="p-4 bg-success/5 border border-success/20 rounded-lg">
                   <p className="text-sm text-success font-medium">
-                    ✓ Potential monthly savings: $18
+                    {sections.idle_resources?.affected_resources > 0
+                      ? `✓ Potential monthly savings: $${sections.idle_resources?.estimated_savings ?? 0}`
+                      : "✓ No idle resources detected"}
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    1 idle instances identified for optimization
+                    {sections.idle_resources?.affected_resources ?? 0} idle instance(s) identified for optimization
                   </p>
                 </div>
               </CardContent>
@@ -264,7 +280,10 @@ export function CostOptimization() {
               </div>
               <div className="p-4 bg-primary/5 border border-primary/20 rounded-lg">
                 <p className="text-sm text-primary font-medium">
-                  Projected savings: $30/month
+                  Projected savings: ${sections.right_sizing?.estimated_savings ?? 0}/month
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {sections.right_sizing?.candidates ?? 0} resource(s) can be right-sized
                 </p>
               </div>
             </CardContent>
@@ -296,10 +315,12 @@ export function CostOptimization() {
                 <div className="space-y-3">
                   <div className="p-4 bg-eco/5 border border-eco/20 rounded-lg">
                     <p className="text-sm text-eco font-medium">
-                      ✓ Schedule detected: Stop dev/test resources 6 PM - 8 AM
+                      ✓ {sections.scheduling?.schedulable_resources > 0
+                        ? `${sections.scheduling.schedulable_resources} dev/test resource(s) can be scheduled off-hours`
+                        : "No schedulable dev/test resources detected"}
                     </p>
                     <p className="text-xs text-muted-foreground mt-1">
-                      Estimated savings: $15/month
+                      Estimated savings: ${sections.scheduling?.estimated_savings ?? 0}/month
                     </p>
                   </div>
                 </div>
@@ -340,7 +361,10 @@ export function CostOptimization() {
               </div>
               <div className="p-4 bg-success/5 border border-success/20 rounded-lg">
                 <p className="text-sm text-success font-medium">
-                  Projected savings: ${Math.round((autoScalingLevel[0] / 100) * 300)}/month
+                  Projected savings: ${sections.auto_scaling?.estimated_savings ?? 0}/month
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Reducing {sections.auto_scaling?.waste_reduction_pct ?? 0}% over-provisioning waste
                 </p>
               </div>
             </CardContent>
@@ -371,10 +395,12 @@ export function CostOptimization() {
               <CardContent className="pt-0">
                 <div className="p-4 bg-primary/5 border border-primary/20 rounded-lg">
                   <p className="text-sm text-primary font-medium">
-                    ✓ Archive old data to cheaper storage tiers
+                    ✓ {sections.storage?.candidates > 0
+                      ? `${sections.storage.candidates} storage resource(s) can be optimized with lifecycle policies`
+                      : "No storage optimization opportunities detected"}
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Estimated savings: $8/month
+                    Estimated savings: ${sections.storage?.estimated_savings ?? 0}/month
                   </p>
                 </div>
               </CardContent>
@@ -396,14 +422,14 @@ export function CostOptimization() {
             <CardContent className="space-y-6">
               <div className="text-center">
                 <div className="text-3xl font-bold text-success">
-                  8
+                  ${projectedSavings.monthly}
                 </div>
                 <p className="text-sm text-muted-foreground">per month</p>
               </div>
 
               <div className="text-center">
                 <div className="text-2xl font-bold text-primary">
-                  96
+                  ${projectedSavings.yearly}
                 </div>
                 <p className="text-sm text-muted-foreground">per year</p>
               </div>
@@ -434,29 +460,44 @@ export function CostOptimization() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-3">
-                <div className="flex items-center space-x-3">
-                  <div className="h-2 w-2 bg-success rounded-full" />
-                  <div className="flex-1">
-                    <p className="text-sm font-medium">Immediate (0-1 days)</p>
-                    <p className="text-xs text-muted-foreground">Idle resource cleanup</p>
-                  </div>
-                </div>
-                
-                <div className="flex items-center space-x-3">
-                  <div className="h-2 w-2 bg-primary rounded-full" />
-                  <div className="flex-1">
-                    <p className="text-sm font-medium">Short-term (1-7 days)</p>
-                    <p className="text-xs text-muted-foreground">Right-sizing & scheduling</p>
-                  </div>
-                </div>
-                
-                <div className="flex items-center space-x-3">
-                  <div className="h-2 w-2 bg-muted-foreground rounded-full" />
-                  <div className="flex-1">
-                    <p className="text-sm font-medium">Long-term (1-4 weeks)</p>
-                    <p className="text-xs text-muted-foreground">Auto-scaling optimization</p>
-                  </div>
-                </div>
+                {implementationPlan.length > 0 ? (
+                  implementationPlan.map((phase, idx) => {
+                    const dotColor = idx === 0 ? "bg-success" : idx === 1 ? "bg-primary" : "bg-muted-foreground";
+                    return (
+                      <div key={idx} className="flex items-center space-x-3">
+                        <div className={`h-2 w-2 ${dotColor} rounded-full`} />
+                        <div className="flex-1">
+                          <p className="text-sm font-medium">{phase.title} ({phase.timeframe})</p>
+                          <p className="text-xs text-muted-foreground">{phase.description}</p>
+                        </div>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <>
+                    <div className="flex items-center space-x-3">
+                      <div className="h-2 w-2 bg-success rounded-full" />
+                      <div className="flex-1">
+                        <p className="text-sm font-medium">Immediate (0-1 days)</p>
+                        <p className="text-xs text-muted-foreground">Idle resource cleanup</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center space-x-3">
+                      <div className="h-2 w-2 bg-primary rounded-full" />
+                      <div className="flex-1">
+                        <p className="text-sm font-medium">Short-term (1-7 days)</p>
+                        <p className="text-xs text-muted-foreground">Right-sizing & scheduling</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center space-x-3">
+                      <div className="h-2 w-2 bg-muted-foreground rounded-full" />
+                      <div className="flex-1">
+                        <p className="text-sm font-medium">Long-term (1-4 weeks)</p>
+                        <p className="text-xs text-muted-foreground">Auto-scaling optimization</p>
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             </CardContent>
           </Card>
