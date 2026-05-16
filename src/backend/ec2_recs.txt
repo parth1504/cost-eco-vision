@@ -2296,3 +2296,183 @@
   }
 ]
 
+=== unknown ===
+[
+  {
+    "rule_id": "ec2.security.ssh_open",
+    "title": "Restrict Admin Ports From Internet",
+    "type": "security",
+    "category": "Critical",
+    "severity": "critical",
+    "confidence": 0.95,
+    "description": "Admin ports (SSH/RDP) are exposed to 0.0.0.0/0. Replace with Session Manager (no inbound port at all) or restrict to office VPN CIDR.",
+    "issue": "Admin port(s) [22] open to 0.0.0.0/0.",
+    "reasoning": "Security group ingress 0.0.0.0/0 on port 22 or 3389.",
+    "evidence": {
+      "ssh_rdp_open_to_world": {
+        "open_ports": [
+          22
+        ]
+      }
+    },
+    "supporting_signals": [
+      "ssh_rdp_open_to_world"
+    ],
+    "blast_radius": "account",
+    "operational_risk": "low",
+    "rollback": "Re-add ingress rule.",
+    "cost_basis": "",
+    "impact": "high",
+    "saving": "N/A",
+    "status": "active",
+    "manual_only": true,
+    "solution_steps": [],
+    "boto3_sequence": [],
+    "detected_at": "2026-05-16T14:06:44.341443"
+  },
+  {
+    "rule_id": "ec2.reliability.no_asg",
+    "title": "Single Instance \u2014 No Auto Scaling Group",
+    "type": "reliability",
+    "category": "Warning",
+    "severity": "medium",
+    "confidence": 0.85,
+    "description": "Workload runs on a single instance. Hardware failure = full outage. ASG with min=1 ensures replacement on instance death; min=2+ across AZs ensures continuous availability.",
+    "issue": "Instance is standalone (no Auto Scaling Group) \u2014 single point of failure.",
+    "reasoning": "No ASG attachment detected.",
+    "evidence": {
+      "no_autoscaling": {
+        "asg_attached": false
+      }
+    },
+    "supporting_signals": [
+      "no_autoscaling"
+    ],
+    "blast_radius": "service",
+    "operational_risk": "medium",
+    "rollback": "Disassociate ASG; revert to standalone.",
+    "cost_basis": "",
+    "impact": "high",
+    "saving": "N/A",
+    "status": "active",
+    "manual_only": true,
+    "solution_steps": [],
+    "boto3_sequence": [],
+    "detected_at": "2026-05-16T14:06:44.341439"
+  }
+]
+
+=== unknown ===
+[
+  {
+    "rule_id": "ec2.security.ssh_open",
+    "title": "Restrict Admin Ports From Internet",
+    "type": "security",
+    "category": "Critical",
+    "severity": "critical",
+    "confidence": 0.95,
+    "description": "Admin ports (SSH/RDP) are exposed to 0.0.0.0/0. Replace with Session Manager (no inbound port at all) or restrict to office VPN CIDR.",
+    "issue": "Admin port(s) [22] open to 0.0.0.0/0.",
+    "reasoning": "Security group ingress 0.0.0.0/0 on port 22 or 3389.",
+    "evidence": {
+      "ssh_rdp_open_to_world": {
+        "open_ports": [
+          22
+        ]
+      }
+    },
+    "supporting_signals": [
+      "ssh_rdp_open_to_world"
+    ],
+    "blast_radius": "account",
+    "operational_risk": "low",
+    "rollback": "Re-add ingress rule.",
+    "cost_basis": "",
+    "impact": "high",
+    "saving": "N/A",
+    "status": "active",
+    "manual_only": true,
+    "solution_steps": [],
+    "boto3_sequence": [],
+    "detected_at": "2026-05-16T14:06:54.371744"
+  },
+  {
+    "rule_id": "ec2.cost.idle_stop",
+    "title": "Idle Instance \u2014 Stop or Schedule",
+    "type": "cost",
+    "category": "Optimization",
+    "severity": "high",
+    "confidence": 0.9,
+    "description": "This instance shows sustained idle behavior across CPU. Stopping (or scheduling start/stop windows) eliminates compute cost; running EBS still incurs storage cost.",
+    "issue": "Idle EC2 with non-zero monthly cost.",
+    "reasoning": "CPU sustained-low signal + monthly cost > 0. Cross-checked against autoscaling attachment to avoid stopping ASG members.",
+    "evidence": {
+      "cpu_sustained_low": {
+        "cpu_avg": 0.36,
+        "cpu_max": 6.62,
+        "window": "7d"
+      }
+    },
+    "supporting_signals": [
+      "cpu_sustained_low"
+    ],
+    "blast_radius": "instance",
+    "operational_risk": "medium",
+    "rollback": "aws ec2 start-instances --instance-ids <id>",
+    "cost_basis": "100% of monthly compute cost (storage continues).",
+    "impact": "medium",
+    "saving": 0.0,
+    "status": "active",
+    "manual_only": false,
+    "solution_steps": [
+      {
+        "step": 1,
+        "command": "aws ec2 stop-instances --instance-ids i-0b857659427533f2c",
+        "description": "Stop the instance to eliminate compute cost."
+      }
+    ],
+    "boto3_sequence": [
+      {
+        "service": "ec2",
+        "operation": "stop_instances",
+        "params": {
+          "InstanceIds": [
+            "i-0b857659427533f2c"
+          ]
+        }
+      }
+    ],
+    "detected_at": "2026-05-16T14:06:54.371734"
+  },
+  {
+    "rule_id": "ec2.reliability.no_asg",
+    "title": "Single Instance \u2014 No Auto Scaling Group",
+    "type": "reliability",
+    "category": "Warning",
+    "severity": "medium",
+    "confidence": 0.85,
+    "description": "Workload runs on a single instance. Hardware failure = full outage. ASG with min=1 ensures replacement on instance death; min=2+ across AZs ensures continuous availability.",
+    "issue": "Instance is standalone (no Auto Scaling Group) \u2014 single point of failure.",
+    "reasoning": "No ASG attachment detected.",
+    "evidence": {
+      "no_autoscaling": {
+        "asg_attached": false
+      }
+    },
+    "supporting_signals": [
+      "no_autoscaling"
+    ],
+    "blast_radius": "service",
+    "operational_risk": "medium",
+    "rollback": "Disassociate ASG; revert to standalone.",
+    "cost_basis": "",
+    "impact": "high",
+    "saving": "N/A",
+    "status": "active",
+    "manual_only": true,
+    "solution_steps": [],
+    "boto3_sequence": [],
+    "detected_at": "2026-05-16T14:06:54.371740"
+  }
+]
+
