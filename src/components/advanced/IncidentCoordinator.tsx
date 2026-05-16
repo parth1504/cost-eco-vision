@@ -248,13 +248,23 @@ function ExpandableSection({ title, icon: Icon, children, defaultOpen = false, b
   );
 }
 
-// ─── SVG Dependency Graph ───────────────────────────────────────────────────
+// ─── Vertical Dependency Graph (HTML nodes + SVG edges) ───────────────────
 
-const NODE_W = 160;
-const NODE_H = 80;
-const COL_GAP = 80;
-const ROW_GAP = 30;
-const PAD = 30;
+const NODE_W = 192;
+const NODE_H = 82;
+const LAYER_GAP = 110;
+const NODE_GAP = 36;
+const PAD = 48;
+
+function TypeIcon({ type }: { type: string }) {
+  const cls = "h-3.5 w-3.5";
+  switch (type) {
+    case "database": return <Database className={cls} />;
+    case "external": return <Globe className={cls} />;
+    case "infra": return <Layers className={cls} />;
+    default: return <Server className={cls} />;
+  }
+}
 
 function DependencyGraphSVG({ graphNodes, topology, onNodeClick, selectedNode }: {
   graphNodes: GraphNode[];
@@ -266,273 +276,215 @@ function DependencyGraphSVG({ graphNodes, topology, onNodeClick, selectedNode }:
     return <div className="text-center text-muted-foreground py-8 text-sm">No service data available.</div>;
   }
 
-  const maxCol = Math.max(...graphNodes.map(n => n.col));
+  // Layer counts for centering
   const layerCounts = new Map<number, number>();
   for (const n of graphNodes) {
     layerCounts.set(n.col, (layerCounts.get(n.col) || 0) + 1);
   }
-  const maxRowInAnyLayer = Math.max(...Array.from(layerCounts.values()));
 
-  const svgW = (maxCol + 1) * (NODE_W + COL_GAP) + PAD * 2;
-  const svgH = maxRowInAnyLayer * (NODE_H + ROW_GAP) + PAD * 2;
+  const maxLayer = Math.max(...graphNodes.map(n => n.col));
+  const maxNodesInLayer = Math.max(...Array.from(layerCounts.values()));
 
+  const totalW = Math.max(maxNodesInLayer * (NODE_W + NODE_GAP) - NODE_GAP + PAD * 2, 600);
+  const totalH = (maxLayer + 1) * (NODE_H + LAYER_GAP) - LAYER_GAP + PAD * 2;
+
+  // Vertical layout: col = layer (Y), row = position within layer (X), centered
   const getPos = (node: GraphNode) => {
     const layerSize = layerCounts.get(node.col) || 1;
-    const totalHeight = layerSize * NODE_H + (layerSize - 1) * ROW_GAP;
-    const startY = (svgH - totalHeight) / 2;
+    const layerWidth = layerSize * NODE_W + (layerSize - 1) * NODE_GAP;
+    const startX = (totalW - layerWidth) / 2;
     return {
-      x: PAD + node.col * (NODE_W + COL_GAP),
-      y: startY + node.row * (NODE_H + ROW_GAP),
+      x: startX + node.row * (NODE_W + NODE_GAP),
+      y: PAD + node.col * (NODE_H + LAYER_GAP),
     };
   };
 
-  const statusFill = (status: string) => {
-    switch (status) {
-      case "failing": return "var(--destructive)";
-      case "degraded": return "var(--warning, #f59e0b)";
-      default: return "var(--success, #22c55e)";
-    }
-  };
-
-  const statusBg = (status: string) => {
-    switch (status) {
-      case "failing": return "rgba(239,68,68,0.08)";
-      case "degraded": return "rgba(245,158,11,0.08)";
-      default: return "rgba(34,197,94,0.05)";
-    }
-  };
-
-  const typeIcon = (type: string) => {
-    switch (type) {
-      case "database": return "🗄";
-      case "external": return "🌐";
-      case "infra": return "🖥";
-      default: return "⚙";
-    }
-  };
-
-  // Build edges from topology or from dependsOn
+  // Build edges
   const edges: { from: GraphNode; to: GraphNode }[] = [];
   for (const node of graphNodes) {
     for (const dep of node.dependsOn) {
       const depNode = graphNodes.find(n => n.id === dep);
-      if (depNode) {
-        edges.push({ from: depNode, to: node });
-      }
+      if (depNode) edges.push({ from: depNode, to: node });
     }
   }
-
-  // If no topology edges, create chain edges as fallback
   if (edges.length === 0 && graphNodes.length > 1) {
     for (let i = 0; i < graphNodes.length - 1; i++) {
       edges.push({ from: graphNodes[i], to: graphNodes[i + 1] });
     }
   }
 
-  // Number nodes by failure order
+  // Failure order
   const orderedByFailure = [...graphNodes]
     .filter(n => n.firstFailure)
     .sort((a, b) => (a.firstFailure || "").localeCompare(b.firstFailure || ""));
   const failureOrder = new Map<string, number>();
   orderedByFailure.forEach((n, i) => failureOrder.set(n.id, i + 1));
 
+  const statusBorder = (status: string) => {
+    switch (status) {
+      case "failing": return "border-red-500";
+      case "degraded": return "border-amber-500";
+      default: return "border-emerald-500";
+    }
+  };
+
+  const statusDot = (status: string) => {
+    switch (status) {
+      case "failing": return "bg-red-500";
+      case "degraded": return "bg-amber-500";
+      default: return "bg-emerald-500";
+    }
+  };
+
+  const statusLabel = (status: string) => {
+    switch (status) {
+      case "failing": return "text-red-600 dark:text-red-400";
+      case "degraded": return "text-amber-600 dark:text-amber-400";
+      default: return "text-emerald-600 dark:text-emerald-400";
+    }
+  };
+
   return (
-    <div className="overflow-x-auto">
-      <svg
-        width={svgW}
-        height={svgH}
-        viewBox={`0 0 ${svgW} ${svgH}`}
-        className="mx-auto"
-      >
-        <defs>
-          <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-            <polygon points="0 0, 8 3, 0 6" fill="var(--muted-foreground, #888)" opacity="0.5" />
-          </marker>
-          <marker id="arrowhead-red" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-            <polygon points="0 0, 8 3, 0 6" fill="var(--destructive, #ef4444)" opacity="0.7" />
-          </marker>
-          <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
-            <feDropShadow dx="0" dy="2" stdDeviation="3" floodOpacity="0.1" />
-          </filter>
-        </defs>
+    <div className="overflow-x-auto pb-4">
+      <div style={{ width: totalW, height: totalH, position: "relative" }} className="mx-auto">
+        {/* SVG edge layer */}
+        <svg
+          width={totalW}
+          height={totalH}
+          className="absolute inset-0 pointer-events-none"
+          style={{ zIndex: 1 }}
+        >
+          <defs>
+            <marker id="arrow-fail" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+              <path d="M 0 0 L 10 4 L 0 8 L 3 4 Z" fill="#ef4444" />
+            </marker>
+            <marker id="arrow-dep" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+              <path d="M 0 0 L 8 3 L 0 6 L 2 3 Z" fill="#9ca3af" />
+            </marker>
+          </defs>
+          {edges.map((edge, i) => {
+            const fromPos = getPos(edge.from);
+            const toPos = getPos(edge.to);
+            const x1 = fromPos.x + NODE_W / 2;
+            const y1 = fromPos.y + NODE_H;
+            const x2 = toPos.x + NODE_W / 2;
+            const y2 = toPos.y;
+            const dy = (y2 - y1) * 0.45;
+            const isFail = edge.from.status !== "healthy" || edge.to.status !== "healthy";
 
-        {/* Edges */}
-        {edges.map((edge, i) => {
-          const fromPos = getPos(edge.from);
-          const toPos = getPos(edge.to);
-          const x1 = fromPos.x + NODE_W;
-          const y1 = fromPos.y + NODE_H / 2;
-          const x2 = toPos.x;
-          const y2 = toPos.y + NODE_H / 2;
-          const midX = (x1 + x2) / 2;
-          const isFailPath = edge.from.status === "failing" || edge.to.status === "failing";
+            return (
+              <path
+                key={`e-${i}`}
+                d={`M ${x1} ${y1} C ${x1} ${y1 + dy}, ${x2} ${y2 - dy}, ${x2} ${y2}`}
+                fill="none"
+                stroke={isFail ? "#ef4444" : "#9ca3af"}
+                strokeWidth={isFail ? 2.5 : 1.5}
+                strokeDasharray={isFail ? "none" : "6 4"}
+                opacity={isFail ? 0.65 : 0.35}
+                markerEnd={isFail ? "url(#arrow-fail)" : "url(#arrow-dep)"}
+              />
+            );
+          })}
+        </svg>
 
-          return (
-            <path
-              key={`edge-${i}`}
-              d={`M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}`}
-              fill="none"
-              stroke={isFailPath ? "var(--destructive, #ef4444)" : "var(--muted-foreground, #888)"}
-              strokeWidth={isFailPath ? 2.5 : 1.5}
-              strokeDasharray={isFailPath ? "none" : "6 3"}
-              opacity={isFailPath ? 0.6 : 0.3}
-              markerEnd={isFailPath ? "url(#arrowhead-red)" : "url(#arrowhead)"}
-            />
-          );
-        })}
-
-        {/* Nodes */}
+        {/* HTML node cards */}
         {graphNodes.map((node) => {
           const pos = getPos(node);
           const isSelected = selectedNode === node.id;
           const order = failureOrder.get(node.id);
 
           return (
-            <g
+            <div
               key={node.id}
               onClick={() => onNodeClick(node.id)}
-              className="cursor-pointer"
+              className={`absolute cursor-pointer rounded-xl border-2 bg-card shadow-md
+                transition-all duration-200 hover:shadow-lg hover:-translate-y-0.5
+                ${statusBorder(node.status)}
+                ${isSelected ? "ring-2 ring-primary ring-offset-2 ring-offset-background shadow-lg" : ""}
+                ${node.isRootCause ? "border-[3px]" : ""}
+              `}
+              style={{
+                left: pos.x,
+                top: pos.y,
+                width: NODE_W,
+                height: NODE_H,
+                zIndex: isSelected ? 20 : 10,
+              }}
             >
-              {/* Node body */}
-              <rect
-                x={pos.x}
-                y={pos.y}
-                width={NODE_W}
-                height={NODE_H}
-                rx={12}
-                ry={12}
-                fill={statusBg(node.status)}
-                stroke={isSelected ? "var(--primary, #3b82f6)" : statusFill(node.status)}
-                strokeWidth={isSelected ? 3 : 2}
-                filter="url(#shadow)"
-              />
-
-              {/* Order badge (top-left) */}
+              {/* Order badge */}
               {order && (
-                <>
-                  <circle
-                    cx={pos.x + 2}
-                    cy={pos.y + 2}
-                    r={12}
-                    fill="var(--foreground, #111)"
-                  />
-                  <text
-                    x={pos.x + 2}
-                    y={pos.y + 7}
-                    textAnchor="middle"
-                    fontSize="11"
-                    fontWeight="700"
-                    fill="var(--background, #fff)"
-                  >
-                    {order}
-                  </text>
-                </>
+                <div className="absolute -top-2.5 -left-2.5 w-6 h-6 rounded-full bg-foreground text-background
+                  flex items-center justify-center text-[10px] font-bold shadow-sm z-10">
+                  {order}
+                </div>
               )}
 
               {/* ROOT badge */}
               {node.isRootCause && (
-                <>
-                  <rect
-                    x={pos.x + NODE_W - 42}
-                    y={pos.y - 8}
-                    width={40}
-                    height={16}
-                    rx={4}
-                    fill="var(--destructive, #ef4444)"
-                  />
-                  <text
-                    x={pos.x + NODE_W - 22}
-                    y={pos.y + 4}
-                    textAnchor="middle"
-                    fontSize="9"
-                    fontWeight="800"
-                    fill="white"
-                  >
-                    ROOT
-                  </text>
-                </>
+                <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 px-2.5 py-0.5 rounded-full
+                  bg-red-500 text-white text-[9px] font-extrabold tracking-wider shadow-sm z-10">
+                  ROOT CAUSE
+                </div>
               )}
 
-              {/* Service name */}
-              <text
-                x={pos.x + 12}
-                y={pos.y + 24}
-                fontSize="12"
-                fontWeight="600"
-                fill="var(--foreground, #111)"
-              >
-                {typeIcon(node.type)} {node.name.length > 16 ? node.name.slice(0, 15) + "…" : node.name}
-              </text>
+              {/* Content */}
+              <div className="h-full flex flex-col justify-between p-2.5 pt-3">
+                {/* Top: icon + name */}
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <div className={`p-1 rounded ${node.status === "failing" ? "bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400" : node.status === "degraded" ? "bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400" : "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400"}`}>
+                    <TypeIcon type={node.type} />
+                  </div>
+                  <span className="text-[12px] font-semibold truncate leading-tight">{node.name}</span>
+                </div>
 
-              {/* Status pill */}
-              <rect
-                x={pos.x + 10}
-                y={pos.y + 34}
-                width={node.status === "degraded" ? 62 : node.status === "failing" ? 48 : 52}
-                height={18}
-                rx={9}
-                fill={statusFill(node.status)}
-                opacity={0.15}
-              />
-              <text
-                x={pos.x + 14}
-                y={pos.y + 47}
-                fontSize="10"
-                fontWeight="600"
-                fill={statusFill(node.status)}
-              >
-                {node.status}
-              </text>
-
-              {/* Alert count */}
-              {node.alertCount > 0 && (
-                <>
-                  <rect
-                    x={pos.x + NODE_W - 50}
-                    y={pos.y + 34}
-                    width={40}
-                    height={18}
-                    rx={9}
-                    fill="var(--foreground, #111)"
-                    opacity={0.08}
-                  />
-                  <text
-                    x={pos.x + NODE_W - 30}
-                    y={pos.y + 47}
-                    textAnchor="middle"
-                    fontSize="10"
-                    fontWeight="500"
-                    fill="var(--muted-foreground, #888)"
-                  >
-                    {node.alertCount} alert{node.alertCount > 1 ? "s" : ""}
-                  </text>
-                </>
-              )}
-
-              {/* Failure time */}
-              {node.firstFailure && (
-                <text
-                  x={pos.x + 12}
-                  y={pos.y + NODE_H - 8}
-                  fontSize="9"
-                  fill="var(--muted-foreground, #888)"
-                >
-                  {new Date(node.firstFailure).toLocaleTimeString()}
-                </text>
-              )}
-            </g>
+                {/* Bottom row: status + alerts + time */}
+                <div className="flex items-center justify-between gap-1">
+                  <div className="flex items-center gap-1.5">
+                    <div className={`w-1.5 h-1.5 rounded-full ${statusDot(node.status)}`} />
+                    <span className={`text-[10px] font-medium capitalize ${statusLabel(node.status)}`}>
+                      {node.status}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                    {node.alertCount > 0 && (
+                      <span className="font-medium">{node.alertCount} alert{node.alertCount !== 1 ? "s" : ""}</span>
+                    )}
+                    {node.firstFailure && (
+                      <span className="tabular-nums">{new Date(node.firstFailure).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
           );
         })}
-      </svg>
+      </div>
 
       {/* Legend */}
-      <div className="flex items-center justify-center gap-5 mt-3 text-[10px] text-muted-foreground">
-        <div className="flex items-center gap-1.5"><div className="h-3 w-3 rounded border-2 border-destructive bg-destructive/10" />Failing</div>
-        <div className="flex items-center gap-1.5"><div className="h-3 w-3 rounded border-2 border-warning bg-warning/10" />Degraded</div>
-        <div className="flex items-center gap-1.5"><div className="h-3 w-3 rounded border-2 border-success bg-success/5" />Healthy</div>
-        <div className="flex items-center gap-1.5"><div className="px-1.5 py-0.5 rounded bg-destructive text-destructive-foreground text-[8px] font-bold">ROOT</div>Root Cause</div>
-        <div className="flex items-center gap-1.5"><span className="inline-block w-5 border-t-2 border-destructive" />Failure path</div>
-        <div className="flex items-center gap-1.5"><span className="inline-block w-5 border-t-2 border-dashed border-muted-foreground opacity-40" />Dependency</div>
+      <div className="flex items-center justify-center gap-6 mt-4 text-[11px] text-muted-foreground">
+        <div className="flex items-center gap-1.5">
+          <div className="w-3 h-3 rounded border-2 border-red-500 bg-red-50 dark:bg-red-900/20" />
+          Failing
+        </div>
+        <div className="flex items-center gap-1.5">
+          <div className="w-3 h-3 rounded border-2 border-amber-500 bg-amber-50 dark:bg-amber-900/20" />
+          Degraded
+        </div>
+        <div className="flex items-center gap-1.5">
+          <div className="w-3 h-3 rounded border-2 border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20" />
+          Healthy
+        </div>
+        <div className="flex items-center gap-1.5">
+          <div className="px-2 py-0.5 rounded-full bg-red-500 text-white text-[8px] font-bold">ROOT CAUSE</div>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <div className="w-5 h-0 border-t-2 border-red-500" />
+          Failure path
+        </div>
+        <div className="flex items-center gap-1.5">
+          <div className="w-5 h-0 border-t-[1.5px] border-dashed border-gray-400" />
+          Dependency
+        </div>
       </div>
     </div>
   );
