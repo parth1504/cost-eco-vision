@@ -15,7 +15,8 @@ import {
   Terminal,
   GitPullRequest,
   Cpu,
-  ChevronDown
+  ChevronDown,
+  FileSearch,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
