@@ -11,6 +11,7 @@ from routes.security import router as security_router
 from routes.incident import router as incident_router
 from routes.drift import router as drift_router
 from routes.leaderboard import router as leaderboard_router
+from routes.logs import router as logs_router
 
 app = FastAPI(title="Cloud Management API")
 
@@ -72,6 +73,10 @@ app.include_router(optimization_router)
 
 # Notification endpoints
 app.include_router(notification_router)
+
+# Log analyser endpoints
+app.include_router(logs_router)
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

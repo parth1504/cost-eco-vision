@@ -8,6 +8,7 @@ from services.optimization import (
 )
 from services.resources import get_all_resources
 from services.simulation import run_simulation
+from services.explainability import generate_explainability
 
 router = APIRouter(prefix="/optimization", tags=["optimization"])
 
@@ -33,6 +34,23 @@ async def simulate(payload: Dict[str, Any]):
         right_sizing_level=payload.get("right_sizing_level", 70),
         auto_scaling_sensitivity=payload.get("auto_scaling_level", 5),
     )
+
+
+@router.post("/explain")
+async def explain(payload: Dict[str, Any]):
+    """Generate explainability payload for a given section's simulation."""
+    resources = await get_all_resources()
+    section = payload.get("section", "right_sizing")
+    config = payload.get("config", {})
+
+    sim = run_simulation(
+        resources,
+        right_sizing_level=config.get("right_sizing_level", 70),
+        auto_scaling_sensitivity=config.get("auto_scaling_level", 5),
+    )
+
+    sim_section = sim.get(section, {})
+    return generate_explainability(section, sim_section, resources, config)
 
 
 @router.post("/apply")

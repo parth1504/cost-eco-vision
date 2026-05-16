@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
-import { DollarSign, TrendingUp, Leaf, Zap, Settings, Sparkles, Eye, Code, ShieldCheck, ShieldAlert, Shield } from "lucide-react";
+import { DollarSign, TrendingUp, Leaf, Zap, Settings, Sparkles, Eye, Code, ShieldCheck, ShieldAlert, Shield, HelpCircle, ChevronDown, ChevronUp } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -39,6 +39,9 @@ export function CostOptimization() {
   const [loading, setLoading] = useState(true);
   const [simulation, setSimulation] = useState<any>(null);
   const [viewMode, setViewMode] = useState<"executive" | "developer">("executive");
+  const [explainOpen, setExplainOpen] = useState<{ right_sizing: boolean; auto_scaling: boolean }>({ right_sizing: false, auto_scaling: false });
+  const [explanations, setExplanations] = useState<any>({});
+  const [explainLoading, setExplainLoading] = useState<{ right_sizing: boolean; auto_scaling: boolean }>({ right_sizing: false, auto_scaling: false });
 
   const { toast } = useToast();
 
@@ -187,6 +190,36 @@ export function CostOptimization() {
   useEffect(() => {
     fetchSimulation();
   }, [fetchSimulation]);
+
+  const fetchExplanation = async (section: "right_sizing" | "auto_scaling") => {
+    if (explanations[section] && !explainLoading[section]) {
+      setExplainOpen((prev) => ({ ...prev, [section]: !prev[section] }));
+      return;
+    }
+    setExplainLoading((prev) => ({ ...prev, [section]: true }));
+    setExplainOpen((prev) => ({ ...prev, [section]: true }));
+    try {
+      const response = await fetch("http://localhost:8000/optimization/explain", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          section,
+          config: {
+            right_sizing_level: rightSizingLevel[0],
+            auto_scaling_level: autoScalingLevel[0],
+          },
+        }),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setExplanations((prev: any) => ({ ...prev, [section]: data }));
+      }
+    } catch (error) {
+      console.error(`Explainability fetch failed for ${section}:`, error);
+    } finally {
+      setExplainLoading((prev) => ({ ...prev, [section]: false }));
+    }
+  };
 
   const handleApplyOptimization = async () => {
     try {
@@ -344,15 +377,25 @@ export function CostOptimization() {
               {/* Executive View */}
               {viewMode === "executive" && simulation?.right_sizing?.executive && (
                 <div className="p-4 bg-primary/5 border border-primary/20 rounded-lg space-y-2">
-                  <p className="text-sm text-primary font-medium">
-                    Projected savings: ${simulation.right_sizing.executive.cost_savings_monthly}/month
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Risk: <span className={
-                      simulation.right_sizing.executive.risk_level === "safe" ? "text-success" :
-                      simulation.right_sizing.executive.risk_level === "moderate" ? "text-warning" : "text-destructive"
-                    }>{simulation.right_sizing.executive.risk_level}</span>
-                  </p>
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm text-primary font-medium">
+                      Savings: ${simulation.right_sizing.executive.cost_savings_monthly}/month
+                      <span className="text-muted-foreground ml-1 font-normal">
+                        ({simulation.right_sizing.capacity_reduction_pct}% capacity reduction)
+                      </span>
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3 text-xs">
+                    <span>Risk: <span className={
+                      simulation.right_sizing.executive.risk_level === "safe" ? "text-success font-medium" :
+                      simulation.right_sizing.executive.risk_level === "moderate" ? "text-warning font-medium" : "text-destructive font-medium"
+                    }>{simulation.right_sizing.executive.risk_level}</span></span>
+                    <span className="text-muted-foreground">|</span>
+                    <span>Stability: <span className={
+                      simulation.right_sizing.risk_zone === "safe" ? "text-success font-medium" :
+                      simulation.right_sizing.risk_zone === "moderate" ? "text-warning font-medium" : "text-destructive font-medium"
+                    }>{simulation.right_sizing.risk_zone}</span></span>
+                  </div>
                   <p className="text-xs text-muted-foreground">
                     {simulation.right_sizing.executive.recommendation}
                   </p>
@@ -400,6 +443,50 @@ export function CostOptimization() {
                   <p className="text-xs text-muted-foreground mt-1">
                     {sections.right_sizing?.candidates ?? 0} resource(s) can be right-sized
                   </p>
+                </div>
+              )}
+
+              {/* Explainability */}
+              <button
+                onClick={() => fetchExplanation("right_sizing")}
+                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <HelpCircle className="h-3.5 w-3.5" />
+                <span>Why this recommendation?</span>
+                {explainOpen.right_sizing ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+              </button>
+
+              {explainOpen.right_sizing && (
+                <div className="p-3 bg-muted/30 border border-border rounded-lg space-y-3 text-xs animate-in slide-in-from-top-2">
+                  {explainLoading.right_sizing ? (
+                    <p className="text-muted-foreground italic">Generating explanation...</p>
+                  ) : explanations.right_sizing ? (
+                    <>
+                      <div>
+                        <p className="font-medium text-foreground mb-1">Reasoning</p>
+                        <p className="text-muted-foreground">{explanations.right_sizing.reasoning}</p>
+                      </div>
+                      <div>
+                        <p className="font-medium text-foreground mb-1">Evidence</p>
+                        <div className="space-y-1">
+                          {explanations.right_sizing.evidence?.map((e: any, i: number) => (
+                            <div key={i} className="flex items-start gap-1.5">
+                              <Badge variant={e.severity === "critical" ? "destructive" : e.severity === "warning" ? "secondary" : "default"} className="text-[9px] px-1 py-0 mt-0.5">{e.severity}</Badge>
+                              <span>{e.description}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <p className="font-medium text-foreground mb-1">Assumptions</p>
+                        <ul className="list-disc list-inside text-muted-foreground space-y-0.5">
+                          {explanations.right_sizing.assumptions?.map((a: string, i: number) => (
+                            <li key={i}>{a}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    </>
+                  ) : null}
                 </div>
               )}
             </CardContent>
@@ -519,12 +606,25 @@ export function CostOptimization() {
               {/* Executive View */}
               {viewMode === "executive" && simulation?.auto_scaling?.executive && (
                 <div className="p-4 bg-success/5 border border-success/20 rounded-lg space-y-2">
-                  <p className="text-sm text-success font-medium">
-                    Net savings: ${simulation.auto_scaling.executive.cost_savings_monthly}/month
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Over-provisioning waste: ${simulation.auto_scaling.executive.over_provisioning_waste}/mo
-                  </p>
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm text-success font-medium">
+                      Net savings: ${simulation.auto_scaling.executive.cost_savings_monthly}/month
+                    </p>
+                    <span className="text-xs text-muted-foreground">
+                      Waste reclaimed: ${simulation.auto_scaling.executive.over_provisioning_waste}/mo
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3 text-xs">
+                    <span>Risk: <span className={
+                      simulation.auto_scaling.executive.risk_level === "safe" ? "text-success font-medium" :
+                      simulation.auto_scaling.executive.risk_level === "moderate" ? "text-warning font-medium" : "text-destructive font-medium"
+                    }>{simulation.auto_scaling.executive.risk_level}</span></span>
+                    <span className="text-muted-foreground">|</span>
+                    <span>Stability: <span className={
+                      simulation.auto_scaling.risk_zone === "safe" ? "text-success font-medium" :
+                      simulation.auto_scaling.risk_zone === "moderate" ? "text-warning font-medium" : "text-destructive font-medium"
+                    }>{simulation.auto_scaling.risk_zone}</span></span>
+                  </div>
                   <p className="text-xs text-muted-foreground">
                     {simulation.auto_scaling.executive.recommendation}
                   </p>
@@ -572,6 +672,50 @@ export function CostOptimization() {
                   <p className="text-xs text-muted-foreground mt-1">
                     Reducing {sections.auto_scaling?.waste_reduction_pct ?? 0}% over-provisioning waste
                   </p>
+                </div>
+              )}
+
+              {/* Explainability */}
+              <button
+                onClick={() => fetchExplanation("auto_scaling")}
+                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <HelpCircle className="h-3.5 w-3.5" />
+                <span>Why this recommendation?</span>
+                {explainOpen.auto_scaling ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+              </button>
+
+              {explainOpen.auto_scaling && (
+                <div className="p-3 bg-muted/30 border border-border rounded-lg space-y-3 text-xs animate-in slide-in-from-top-2">
+                  {explainLoading.auto_scaling ? (
+                    <p className="text-muted-foreground italic">Generating explanation...</p>
+                  ) : explanations.auto_scaling ? (
+                    <>
+                      <div>
+                        <p className="font-medium text-foreground mb-1">Reasoning</p>
+                        <p className="text-muted-foreground">{explanations.auto_scaling.reasoning}</p>
+                      </div>
+                      <div>
+                        <p className="font-medium text-foreground mb-1">Evidence</p>
+                        <div className="space-y-1">
+                          {explanations.auto_scaling.evidence?.map((e: any, i: number) => (
+                            <div key={i} className="flex items-start gap-1.5">
+                              <Badge variant={e.severity === "critical" ? "destructive" : e.severity === "warning" ? "secondary" : "default"} className="text-[9px] px-1 py-0 mt-0.5">{e.severity}</Badge>
+                              <span>{e.description}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <p className="font-medium text-foreground mb-1">Assumptions</p>
+                        <ul className="list-disc list-inside text-muted-foreground space-y-0.5">
+                          {explanations.auto_scaling.assumptions?.map((a: string, i: number) => (
+                            <li key={i}>{a}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    </>
+                  ) : null}
                 </div>
               )}
             </CardContent>

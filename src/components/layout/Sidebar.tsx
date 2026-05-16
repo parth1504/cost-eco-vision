@@ -10,7 +10,8 @@ import {
   Settings,
   ChevronLeft,
   Cloud,
-  Menu
+  Menu,
+  FileSearch
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -19,8 +20,9 @@ const navigation = [
   { name: "Overview", href: "/", icon: BarChart3 },
   { name: "Alerts", href: "/alerts", icon: AlertTriangle },
   { name: "Resources", href: "/resources", icon: Server },
-  { name: "Cost Optimization", href: "/cost-optimization", icon: DollarSign },
+  { name: "Cost Optimization", href: "/optimization", icon: DollarSign },
   { name: "Security", href: "/security", icon: Shield },
+  { name: "Log Analyser", href: "/log-analyser", icon: FileSearch },
   { name: "Settings", href: "/settings", icon: Settings },
 ];
 
