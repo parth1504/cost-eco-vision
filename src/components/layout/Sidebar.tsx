@@ -27,6 +27,7 @@ const navigation = [
   { name: "Cost Optimization", href: "/optimization", icon: DollarSign },
   { name: "Security", href: "/security", icon: Shield },
   // { name: "Log Analyser", href: "/log-analyser", icon: FileSearch },
+  { name: "Engineering Intel", href: "/log-analyser", icon: FileSearch },
   { name: "Settings", href: "/settings", icon: Settings },
 ];
 

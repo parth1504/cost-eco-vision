@@ -10,5 +10,7 @@ PyGithub==1.58
 reportlab==4.0.0
 boto3==1.43.2
 google-generativeai
+openai>=1.0.0
+chromadb>=0.4.0
 # Bedrock Converse API is used via boto3 — no extra deps needed.
 # (anthropic SDK no longer required since we moved to provider-agnostic Converse.)

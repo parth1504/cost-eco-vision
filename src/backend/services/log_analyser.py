@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional
 
 from connections.aws import get_client
 from agent.llm.llm_client import get_llm_client
+from services.codebase_index import get_codebase_index
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,9 @@ def analyse_logs(
         # Check for infra changes in the timeframe
         infra_changes = _check_infra_changes(error_start, now)
 
+        # Correlate with code changes
+        code_correlation = _correlate_with_code(error_logs, diff)
+
         # LLM analysis
         analysis = _llm_analyse_diff(
             log_group, error_logs, healthy_logs, diff, infra_changes
@@ -91,6 +95,7 @@ def analyse_logs(
             "baseline_sample": _format_log_entries(baseline_logs[:20]),
             "diff": diff,
             "infra_changes": infra_changes,
+            "code_correlation": code_correlation,
             "analysis": analysis,
         }
 
@@ -248,6 +253,42 @@ def _check_infra_changes(start: datetime, end: datetime) -> List[Dict[str, str]]
         pass
 
     return changes
+
+
+def _correlate_with_code(error_logs: List[Dict], diff: Dict) -> List[Dict[str, Any]]:
+    """Use the codebase index to find code related to error patterns."""
+    index = get_codebase_index()
+    if index.get_stats()["indexed_files"] == 0:
+        index.index_repository()
+
+    correlations = []
+    seen_files = set()
+
+    for pattern in diff.get("new_error_patterns", [])[:5]:
+        keywords = _extract_keywords_from_error(pattern)
+        if not keywords:
+            continue
+        hits = index.search(keywords, n_results=3)
+        for hit in hits:
+            if hit["file"] not in seen_files:
+                seen_files.add(hit["file"])
+                correlations.append({
+                    "error_pattern": pattern[:150],
+                    "related_file": hit["file"],
+                    "code_snippet": hit["content"][:200],
+                    "relevance": round(1.0 - (hit.get("distance") or 0.5), 2),
+                })
+
+    return correlations[:10]
+
+
+def _extract_keywords_from_error(error_msg: str) -> str:
+    """Extract searchable keywords from an error message."""
+    import re
+    msg = re.sub(r'[<>\[\]{}()\d]+', ' ', error_msg)
+    msg = re.sub(r'(TIMESTAMP|UUID|ID)', '', msg)
+    words = [w for w in msg.split() if len(w) > 3 and not w.startswith('/')]
+    return " ".join(words[:8])
 
 
 def _format_log_entries(logs: List[Dict]) -> List[Dict[str, str]]:

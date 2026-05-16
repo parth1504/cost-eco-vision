@@ -11,6 +11,7 @@ import { CostOptimization } from "@/pages/CostOptimization";
 import { Security } from "@/pages/Security";
 import { Settings } from "@/pages/Settings";
 import { LogAnalyser } from "@/pages/LogAnalyser";
+// import { LogAnalyzer } from "@/pages/LogAnalyzer";
 import { PRReviewer } from "@/pages/PRReviewer";
 import NotFound from "./pages/NotFound";
 
@@ -30,10 +31,9 @@ const App = () => (
             <Route path="/cost-optimization" element={<CostOptimization />} />
             <Route path="/security" element={<Security />} />
             <Route path="/settings" element={<Settings />} />
-            <Route path="/optimization" element={<CostOptimization />} />
-            <Route path="engineering/log-analyzer" element={<LogAnalyser />} />
-            <Route path="engineering/pr-reviewer" element={<PRReviewer />} />
-
+            <Route path="/log-analyser" element={<LogAnalyser />} />
+            <Route path="/engineering/log-analyzer" element={<LogAnalyser />} />
+            <Route path="/engineering/pr-reviewer" element={<PRReviewer />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>
