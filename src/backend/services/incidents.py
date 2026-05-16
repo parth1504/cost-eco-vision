@@ -219,6 +219,7 @@ async def get_incident_detail(incident_id: str) -> Dict[str, Any]:
         "timeline": timeline,
         "rootCause": analysis.get("rootCause"),
         "checklist": analysis.get("checklist") or [],
+        "service_topology": incident.get("service_topology"),
         "generated_at": datetime.utcnow().isoformat() + "Z",
     }
 

@@ -15,7 +15,7 @@ router = APIRouter(prefix="/intelligence", tags=["intelligence"])
 
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 GITHUB_REPO = os.getenv("GITHUB_REPO", "")
-DEMO_REPO = os.getenv("DEMO_GITHUB_REPO", "https://github.com/YOUR_USERNAME/application_demo")
+DEMO_REPO = os.getenv("DEMO_GITHUB_REPO", "https://github.com/parth1504/application_demo")
 
 
 @router.post("/index")
@@ -35,13 +35,17 @@ def index_stats():
 
 @router.get("/pr/open")
 def list_open_prs():
+    print("hello from list_open_prs")  # Debug log to confirm function is calledS
     """Fetch all open PRs from the configured GitHub repo."""
+    print(f"DEBUG: GITHUB_TOKEN set: {bool(GITHUB_TOKEN)}, GITHUB_REPO set: {bool(GITHUB_REPO)}")
     if not GITHUB_TOKEN or not GITHUB_REPO:
         return {"status": "error", "error": "GITHUB_TOKEN or GITHUB_REPO not configured", "prs": []}
     try:
         g = Github(GITHUB_TOKEN)
         repo = g.get_repo(GITHUB_REPO)
+        print(f"DEBUG: Connected to GitHub repo: {GITHUB_REPO}")
         prs = repo.get_pulls(state="open", sort="updated", direction="desc")
+        print(f"DEBUG: Fetched {prs.totalCount} open PRs from {GITHUB_REPO}")
         result = []
         for pr in prs[:20]:
             result.append({

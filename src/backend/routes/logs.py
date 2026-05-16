@@ -46,7 +46,7 @@ def demo_app_status():
     """Check if the demo application (order-processing-api) is generating logs."""
     return {
         "log_group": DEMO_APP_LOG_GROUP,
-        "github_repo": "https://github.com/YOUR_USERNAME/application_demo",
+        "github_repo": "https://github.com/parth1504/application_demo",
         "description": "Order Processing API — generates realistic CloudWatch log patterns",
         "incident_types": [
             "payment_cascade",
