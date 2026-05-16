@@ -11,6 +11,7 @@ from routes.security import router as security_router
 from routes.incident import router as incident_router
 from routes.drift import router as drift_router
 from routes.leaderboard import router as leaderboard_router
+from routes.notification import router as notification_router
 
 app = FastAPI(title="Cloud Management API")
 
@@ -68,6 +69,8 @@ app.include_router(leaderboard_router)
 
 # Optimization endpoints
 app.include_router(optimization_router)
+
+app.include_router(notification_router)
 
 
 # Notification endpoints
