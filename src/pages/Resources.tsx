@@ -630,7 +630,7 @@ export function Resources() {
                     <CardContent className="max-w-[600px] overflow-x-auto pr-2">
                       <div className="space-y-4">
                         {selectedResource.recommendations.map((rec, recIdx) => {
-                          const isResolved = rec.status === "resolved";
+                          const isResolved = rec.severity === "resolved";
                           return (
                             <div
                               key={recIdx}
