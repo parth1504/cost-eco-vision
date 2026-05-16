@@ -532,7 +532,7 @@ function DependencyGraphSVG({ graphNodes, topology, onNodeClick, selectedNode }:
         <div className="flex items-center gap-1.5"><div className="h-3 w-3 rounded border-2 border-success bg-success/5" />Healthy</div>
         <div className="flex items-center gap-1.5"><div className="px-1.5 py-0.5 rounded bg-destructive text-destructive-foreground text-[8px] font-bold">ROOT</div>Root Cause</div>
         <div className="flex items-center gap-1.5"><span className="inline-block w-5 border-t-2 border-destructive" />Failure path</div>
-        <div className="flex items-center gap-1.5"><span className="inline-block w-5 border-t-2 border-dashed border-muted-foreground opacity-40" />Dependency</span></div>
+        <div className="flex items-center gap-1.5"><span className="inline-block w-5 border-t-2 border-dashed border-muted-foreground opacity-40" />Dependency</div>
       </div>
     </div>
   );
