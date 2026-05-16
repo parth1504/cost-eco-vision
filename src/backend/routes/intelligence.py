@@ -1,10 +1,21 @@
+import logging
+import os
+import sys
+
 from fastapi import APIRouter
-from typing import Dict, Any
+from typing import Dict, Any, List
+
+from github import Github
 
 from services.codebase_index import get_codebase_index
 from services.pr_intelligence import analyze_pr, analyze_local_diff
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/intelligence", tags=["intelligence"])
+
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
+GITHUB_REPO = os.getenv("GITHUB_REPO", "")
+DEMO_REPO = os.getenv("DEMO_GITHUB_REPO", "https://github.com/YOUR_USERNAME/application_demo")
 
 
 @router.post("/index")
@@ -20,6 +31,36 @@ def index_stats():
     """Get current index statistics."""
     index = get_codebase_index()
     return index.get_stats()
+
+
+@router.get("/pr/open")
+def list_open_prs():
+    """Fetch all open PRs from the configured GitHub repo."""
+    if not GITHUB_TOKEN or not GITHUB_REPO:
+        return {"status": "error", "error": "GITHUB_TOKEN or GITHUB_REPO not configured", "prs": []}
+    try:
+        g = Github(GITHUB_TOKEN)
+        repo = g.get_repo(GITHUB_REPO)
+        prs = repo.get_pulls(state="open", sort="updated", direction="desc")
+        result = []
+        for pr in prs[:20]:
+            result.append({
+                "number": pr.number,
+                "title": pr.title,
+                "author": pr.user.login,
+                "branch": pr.head.ref,
+                "base": pr.base.ref,
+                "updated_at": pr.updated_at.isoformat() if pr.updated_at else "",
+                "additions": pr.additions,
+                "deletions": pr.deletions,
+                "files_changed": pr.changed_files,
+                "labels": [l.name for l in pr.labels],
+                "draft": pr.draft,
+            })
+        return {"status": "ok", "prs": result, "repo": GITHUB_REPO}
+    except Exception as e:
+        logger.error(f"Failed to fetch open PRs: {e}")
+        return {"status": "error", "error": str(e), "prs": []}
 
 
 @router.post("/pr/analyze")
@@ -59,4 +100,36 @@ def get_file_dependencies(file_path: str):
         "file": file_path,
         "dependencies": index.get_dependencies(file_path),
         "dependents": index.get_dependents(file_path),
+    }
+
+
+@router.post("/pr/simulate")
+def simulate_pr_analysis():
+    """Run PR analysis on a simulated diff from the demo application."""
+    demo_script = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "application_demo", "scripts", "simulate_pr.py"
+    )
+
+    try:
+        sys.path.insert(0, os.path.dirname(demo_script))
+        from simulate_pr import generate_pr_diff
+        pr_data = generate_pr_diff()
+        return analyze_local_diff(pr_data["diff"])
+    except Exception as e:
+        return {"status": "error", "error": f"Simulation failed: {str(e)}"}
+
+
+@router.get("/demo/config")
+def demo_config():
+    """Return demo application configuration for the UI."""
+    return {
+        "github_repo": DEMO_REPO,
+        "log_group": "/app/order-processing-api",
+        "app_name": "order-processing-api",
+        "features": {
+            "pr_intelligence": True,
+            "log_intelligence": True,
+            "codebase_search": True,
+        },
     }

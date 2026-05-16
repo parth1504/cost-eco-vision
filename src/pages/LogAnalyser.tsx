@@ -50,18 +50,37 @@ function ExpandableSection({ title, icon: Icon, children, defaultOpen = false }:
 // ─── PR Intelligence Tab ───────────────────────────────────────────────────
 
 function PRIntelligence() {
-  const [prNumber, setPrNumber] = useState("");
+  const [openPRs, setOpenPRs] = useState<any[]>([]);
+  const [selectedPR, setSelectedPR] = useState<number | null>(null);
   const [analysis, setAnalysis] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [fetchingPRs, setFetchingPRs] = useState(true);
+  const [repoName, setRepoName] = useState("");
   const [indexStatus, setIndexStatus] = useState<any>(null);
 
-  useEffect(() => { fetchIndexStats(); }, []);
+  useEffect(() => {
+    fetchOpenPRs();
+    fetchIndexStats();
+  }, []);
 
   const fetchIndexStats = async () => {
     try {
       const res = await fetch("http://localhost:8000/intelligence/index/stats");
       if (res.ok) setIndexStatus(await res.json());
     } catch {}
+  };
+
+  const fetchOpenPRs = async () => {
+    setFetchingPRs(true);
+    try {
+      const res = await fetch("http://localhost:8000/intelligence/pr/open");
+      if (res.ok) {
+        const data = await res.json();
+        setOpenPRs(data.prs || []);
+        setRepoName(data.repo || "");
+      }
+    } catch {}
+    finally { setFetchingPRs(false); }
   };
 
   const reindex = async () => {
@@ -71,15 +90,15 @@ function PRIntelligence() {
     } catch {}
   };
 
-  const analyzePR = async () => {
-    if (!prNumber) return;
+  const analyzePR = async (prNum: number) => {
+    setSelectedPR(prNum);
     setLoading(true);
     setAnalysis(null);
     try {
       const res = await fetch("http://localhost:8000/intelligence/pr/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pr_number: parseInt(prNumber) }),
+        body: JSON.stringify({ pr_number: prNum }),
       });
       if (res.ok) setAnalysis(await res.json());
     } catch (e) {
@@ -91,34 +110,82 @@ function PRIntelligence() {
 
   return (
     <div className="space-y-5">
-      {/* Controls */}
+      {/* Open PRs List */}
       <Card className="dashboard-card">
-        <CardContent className="pt-5">
-          <div className="flex items-center gap-3">
-            <div className="flex-1">
-              <input
-                type="number"
-                placeholder="Enter PR number..."
-                value={prNumber}
-                onChange={(e) => setPrNumber(e.target.value)}
-                className="w-full px-3 py-2 bg-background border border-input rounded-md text-sm"
-              />
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base flex items-center gap-2">
+              <div className="p-1.5 bg-primary/10 rounded"><GitPullRequest className="h-4 w-4 text-primary" /></div>
+              Open Pull Requests
+              {repoName && <span className="text-xs font-normal text-muted-foreground ml-2">{repoName}</span>}
+            </CardTitle>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={fetchOpenPRs} disabled={fetchingPRs}>
+                <RefreshCw className={`h-3.5 w-3.5 mr-1 ${fetchingPRs ? "animate-spin" : ""}`} />
+                Refresh
+              </Button>
+              <Button variant="outline" size="sm" onClick={reindex}>
+                <Layers className="h-3.5 w-3.5 mr-1" />
+                Re-index
+              </Button>
             </div>
-            <Button onClick={analyzePR} disabled={!prNumber || loading}>
-              {loading ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : <Brain className="h-4 w-4 mr-2" />}
-              {loading ? "Analyzing..." : "Analyze PR"}
-            </Button>
-            <Button variant="outline" size="sm" onClick={reindex}>
-              <Layers className="h-4 w-4 mr-1" />
-              Re-index
-            </Button>
           </div>
           {indexStatus && (
-            <div className="flex gap-4 mt-3 text-xs text-muted-foreground">
+            <div className="flex gap-4 text-xs text-muted-foreground">
               <span>Indexed: {indexStatus.indexed_files} files</span>
               <span>Chunks: {indexStatus.total_chunks}</span>
-              <span>Dependencies: {indexStatus.dependency_edges} edges</span>
               <span>{indexStatus.chroma_available ? "ChromaDB active" : "Fallback mode"}</span>
+            </div>
+          )}
+        </CardHeader>
+        <CardContent>
+          {fetchingPRs ? (
+            <div className="flex items-center justify-center py-8 gap-2 text-muted-foreground">
+              <RefreshCw className="h-4 w-4 animate-spin" />
+              <span className="text-sm">Fetching open PRs...</span>
+            </div>
+          ) : openPRs.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <GitPullRequest className="h-8 w-8 mx-auto mb-2 opacity-40" />
+              <p className="text-sm">No open PRs found</p>
+              <p className="text-xs mt-1">Configure GITHUB_TOKEN and GITHUB_REPO env vars</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {openPRs.map((pr) => (
+                <button
+                  key={pr.number}
+                  onClick={() => analyzePR(pr.number)}
+                  disabled={loading && selectedPR === pr.number}
+                  className={`w-full flex items-center gap-3 p-3 rounded-lg border transition-all text-left hover:bg-muted/30 ${
+                    selectedPR === pr.number ? "border-primary bg-primary/5" : "border-border"
+                  }`}
+                >
+                  <div className="flex-shrink-0">
+                    <GitPullRequest className={`h-4 w-4 ${pr.draft ? "text-muted-foreground" : "text-success"}`} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium truncate">{pr.title}</span>
+                      {pr.draft && <Badge variant="outline" className="text-[10px]">Draft</Badge>}
+                    </div>
+                    <div className="flex items-center gap-3 text-xs text-muted-foreground mt-0.5">
+                      <span>#{pr.number}</span>
+                      <span>{pr.author}</span>
+                      <span>{pr.branch} → {pr.base}</span>
+                      <span className="text-success">+{pr.additions}</span>
+                      <span className="text-destructive">-{pr.deletions}</span>
+                    </div>
+                  </div>
+                  <div className="flex-shrink-0">
+                    {loading && selectedPR === pr.number ? (
+                      <RefreshCw className="h-4 w-4 animate-spin text-primary" />
+                    ) : (
+                      <Brain className="h-4 w-4 text-muted-foreground" />
+                    )}
+                  </div>
+                </button>
+              ))}
             </div>
           )}
         </CardContent>
@@ -340,8 +407,18 @@ function LogIntelligence() {
   const [selectedGroup, setSelectedGroup] = useState("");
   const [analysis, setAnalysis] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [autoFetched, setAutoFetched] = useState(false);
 
   useEffect(() => { fetchLogGroups(); }, []);
+
+  useEffect(() => {
+    if (logGroups.length > 0 && !autoFetched) {
+      setAutoFetched(true);
+      const defaultGroup = logGroups[0]?.name || "";
+      setSelectedGroup(defaultGroup);
+      if (defaultGroup) runAnalysisFor(defaultGroup);
+    }
+  }, [logGroups]);
 
   const fetchLogGroups = async () => {
     try {
@@ -350,19 +427,22 @@ function LogIntelligence() {
     } catch {}
   };
 
-  const runAnalysis = async () => {
-    if (!selectedGroup) return;
+  const runAnalysisFor = async (group: string) => {
     setLoading(true);
     setAnalysis(null);
     try {
       const res = await fetch("http://localhost:8000/logs/analyse", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ log_group: selectedGroup }),
+        body: JSON.stringify({ log_group: group }),
       });
       if (res.ok) setAnalysis(await res.json());
     } catch {}
     finally { setLoading(false); }
+  };
+
+  const runAnalysis = () => {
+    if (selectedGroup) runAnalysisFor(selectedGroup);
   };
 
   return (
@@ -372,7 +452,7 @@ function LogIntelligence() {
         <CardContent className="pt-5">
           <div className="flex items-center gap-3">
             <div className="flex-1">
-              <Select value={selectedGroup} onValueChange={setSelectedGroup}>
+              <Select value={selectedGroup} onValueChange={(v) => { setSelectedGroup(v); runAnalysisFor(v); }}>
                 <SelectTrigger><SelectValue placeholder="Select a CloudWatch log group..." /></SelectTrigger>
                 <SelectContent>
                   {logGroups.map((g) => (
@@ -383,7 +463,7 @@ function LogIntelligence() {
             </div>
             <Button onClick={runAnalysis} disabled={!selectedGroup || loading}>
               {loading ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : <Zap className="h-4 w-4 mr-2" />}
-              {loading ? "Analyzing..." : "Analyze Logs"}
+              {loading ? "Analyzing..." : "Refresh"}
             </Button>
           </div>
         </CardContent>
