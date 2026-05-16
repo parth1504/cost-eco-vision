@@ -218,10 +218,22 @@ def simulate_autoscaling(
     # Cost impact: sweet spot in the middle
     # Low sensitivity → over-provisioned (cost waste)
     # High sensitivity → under-provisioned during spikes (retries + latency)
-    over_scaling_waste = round(total_cost * 0.12 * (1 - sens_frac) ** 1.5, 2)
-    under_scaling_cost = round(total_cost * 0.05 * (sens_frac ** 2), 2)
-    net_savings = round(total_cost * 0.15 * sens_frac - under_scaling_cost, 2)
+    # Normalize sensitivity (expected input: 0–10)
+    sens_frac = sensitivity / 10.0
 
+    # Clamp to [0, 1] to avoid invalid math
+    sens_frac = max(0.0, min(1.0, sens_frac))
+
+    # Safe base (prevents negative fractional powers)
+    base = max(0.0, 1 - sens_frac)
+
+    # Calculations
+    over_scaling_waste = round(total_cost * 0.12 * (base ** 1.5), 2)
+    under_scaling_cost = round(total_cost * 0.05 * (sens_frac ** 2), 2)
+
+    # Net savings (ensure it's realistic)
+    gross_savings = total_cost * 0.15 * sens_frac
+    net_savings = round(gross_savings - under_scaling_cost, 2)
     # Responsiveness vs stability tradeoff
     response_time_sec = round(300 - sens_frac * 180)  # 300s → 120s
     stability_score = round(10 - sens_frac * 6, 1)     # 10 → 4
