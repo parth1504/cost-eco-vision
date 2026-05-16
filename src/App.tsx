@@ -10,6 +10,7 @@ import { Resources } from "@/pages/Resources";
 import { CostOptimization } from "@/pages/CostOptimization";
 import { Security } from "@/pages/Security";
 import { Settings } from "@/pages/Settings";
+import { LogAnalyser } from "@/pages/LogAnalyser";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -25,9 +26,10 @@ const App = () => (
             <Route path="/" element={<Overview />} />
             <Route path="/alerts" element={<Alerts />} />
             <Route path="/resources" element={<Resources />} />
-            <Route path="/cost-optimization" element={<CostOptimization />} />
+            <Route path="/optimization" element={<CostOptimization />} />
             <Route path="/security" element={<Security />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/log-analyser" element={<LogAnalyser />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>
