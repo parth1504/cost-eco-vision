@@ -3328,3 +3328,135 @@
   }
 ]
 
+=== unknown ===
+[
+  {
+    "rule_id": "ec2.security.ssh_open",
+    "title": "Restrict Admin Ports From Internet",
+    "type": "security",
+    "category": "Critical",
+    "severity": "critical",
+    "confidence": 0.95,
+    "description": "Admin ports (SSH/RDP) are exposed to 0.0.0.0/0. Replace with Session Manager (no inbound port at all) or restrict to office VPN CIDR.",
+    "issue": "Admin port(s) [22] open to 0.0.0.0/0.",
+    "reasoning": "Security group ingress 0.0.0.0/0 on port 22 or 3389.",
+    "evidence": {
+      "ssh_rdp_open_to_world": {
+        "open_ports": [
+          22
+        ]
+      }
+    },
+    "supporting_signals": [
+      "ssh_rdp_open_to_world"
+    ],
+    "blast_radius": "account",
+    "operational_risk": "low",
+    "rollback": "Re-add ingress rule.",
+    "cost_basis": "",
+    "impact": "high",
+    "saving": "N/A",
+    "status": "active",
+    "manual_only": true,
+    "solution_steps": [],
+    "boto3_sequence": [],
+    "detected_at": "2026-05-17T02:01:08.169765"
+  },
+  {
+    "rule_id": "ec2.reliability.no_asg",
+    "title": "Single Instance \u2014 No Auto Scaling Group",
+    "type": "reliability",
+    "category": "Warning",
+    "severity": "medium",
+    "confidence": 0.85,
+    "description": "Workload runs on a single instance. Hardware failure = full outage. ASG with min=1 ensures replacement on instance death; min=2+ across AZs ensures continuous availability.",
+    "issue": "Instance is standalone (no Auto Scaling Group) \u2014 single point of failure.",
+    "reasoning": "No ASG attachment detected.",
+    "evidence": {
+      "no_autoscaling": {
+        "asg_attached": false
+      }
+    },
+    "supporting_signals": [
+      "no_autoscaling"
+    ],
+    "blast_radius": "service",
+    "operational_risk": "medium",
+    "rollback": "Disassociate ASG; revert to standalone.",
+    "cost_basis": "",
+    "impact": "high",
+    "saving": "N/A",
+    "status": "active",
+    "manual_only": true,
+    "solution_steps": [],
+    "boto3_sequence": [],
+    "detected_at": "2026-05-17T02:01:08.169751"
+  }
+]
+
+=== unknown ===
+[
+  {
+    "rule_id": "ec2.security.ssh_open",
+    "title": "Restrict Admin Ports From Internet",
+    "type": "security",
+    "category": "Critical",
+    "severity": "critical",
+    "confidence": 0.95,
+    "description": "Admin ports (SSH/RDP) are exposed to 0.0.0.0/0. Replace with Session Manager (no inbound port at all) or restrict to office VPN CIDR.",
+    "issue": "Admin port(s) [22] open to 0.0.0.0/0.",
+    "reasoning": "Security group ingress 0.0.0.0/0 on port 22 or 3389.",
+    "evidence": {
+      "ssh_rdp_open_to_world": {
+        "open_ports": [
+          22
+        ]
+      }
+    },
+    "supporting_signals": [
+      "ssh_rdp_open_to_world"
+    ],
+    "blast_radius": "account",
+    "operational_risk": "low",
+    "rollback": "Re-add ingress rule.",
+    "cost_basis": "",
+    "impact": "high",
+    "saving": "N/A",
+    "status": "active",
+    "manual_only": true,
+    "solution_steps": [],
+    "boto3_sequence": [],
+    "detected_at": "2026-05-17T02:01:19.166916"
+  },
+  {
+    "rule_id": "ec2.reliability.no_asg",
+    "title": "Single Instance \u2014 No Auto Scaling Group",
+    "type": "reliability",
+    "category": "Warning",
+    "severity": "medium",
+    "confidence": 0.85,
+    "description": "Workload runs on a single instance. Hardware failure = full outage. ASG with min=1 ensures replacement on instance death; min=2+ across AZs ensures continuous availability.",
+    "issue": "Instance is standalone (no Auto Scaling Group) \u2014 single point of failure.",
+    "reasoning": "No ASG attachment detected.",
+    "evidence": {
+      "no_autoscaling": {
+        "asg_attached": false
+      }
+    },
+    "supporting_signals": [
+      "no_autoscaling"
+    ],
+    "blast_radius": "service",
+    "operational_risk": "medium",
+    "rollback": "Disassociate ASG; revert to standalone.",
+    "cost_basis": "",
+    "impact": "high",
+    "saving": "N/A",
+    "status": "active",
+    "manual_only": true,
+    "solution_steps": [],
+    "boto3_sequence": [],
+    "detected_at": "2026-05-17T02:01:19.166911"
+  }
+]
+

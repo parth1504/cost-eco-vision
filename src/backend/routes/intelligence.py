@@ -2,6 +2,7 @@ import logging
 import os
 import sys
 
+from dotenv import load_dotenv
 from fastapi import APIRouter
 from typing import Dict, Any, List
 
@@ -10,17 +11,18 @@ from github import Github
 from services.codebase_index import get_codebase_index
 from services.pr_intelligence import analyze_pr, analyze_local_diff
 
+load_dotenv()
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/intelligence", tags=["intelligence"])
 
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 _raw_repo = os.getenv("GITHUB_REPO", "")
-# Accept both "owner/repo" and full URLs like "https://github.com/owner/repo"
 if "github.com/" in _raw_repo:
     GITHUB_REPO = "/".join(_raw_repo.rstrip("/").split("github.com/")[1].split("/")[:2])
 else:
     GITHUB_REPO = _raw_repo
 DEMO_REPO = os.getenv("DEMO_GITHUB_REPO", "https://github.com/parth1504/application_demo")
+logger.info(f"GitHub config: repo={GITHUB_REPO!r}, token_set={bool(GITHUB_TOKEN)}")
 
 
 @router.post("/index")
@@ -41,6 +43,7 @@ def index_stats():
 @router.get("/pr/open")
 def list_open_prs():
     """Fetch all open PRs from the configured GitHub repo."""
+    logger.info(f"list_open_prs called: GITHUB_REPO={GITHUB_REPO!r}")
     if not GITHUB_TOKEN or not GITHUB_REPO:
         return {"status": "error", "error": "GITHUB_TOKEN or GITHUB_REPO not configured", "prs": []}
     try:
@@ -64,8 +67,9 @@ def list_open_prs():
             })
         return {"status": "ok", "prs": result, "repo": GITHUB_REPO}
     except Exception as e:
-        logger.error(f"Failed to fetch open PRs: {e}")
-        return {"status": "error", "error": str(e), "prs": []}
+        logger.error(f"Failed to fetch open PRs from {GITHUB_REPO!r}: {e}")
+        print(f"Failed to fetch open PRs: {e}")
+        return {"status": "error", "error": str(e), "prs": [], "repo_used": GITHUB_REPO}
 
 
 @router.post("/pr/analyze")

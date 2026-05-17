@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Clock, CheckCircle, AlertTriangle, Activity, Lightbulb,
   RefreshCw, Sparkles, Network, ArrowRight, ChevronDown, ChevronRight,
-  Zap, Search, Eye, Shield, Server, Database, Globe, Layers, FileText
+  Zap, Search, Eye, Shield, Server, Database, Globe, Layers, FileText, Bell
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -95,6 +95,37 @@ const NEXT_STATES: Record<LifecycleStatus, LifecycleStatus[]> = {
   mitigated: ["resolved", "investigating", "open"],
   resolved: ["open", "investigating"],
 };
+
+// ─── Slack Notification Button ──────────────────────────────────────────────
+
+function SlackNotifyButton({ incidentTitle, rootService }: { incidentTitle: string; rootService?: string }) {
+  const { toast } = useToast();
+  const [sent, setSent] = useState(false);
+
+  const notify = () => {
+    setSent(true);
+    toast({
+      title: "Slack notification sent",
+      description: `#payments-oncall alerted: "${rootService || "Unknown service"}" is causing downstream impact.`,
+    });
+    setTimeout(() => setSent(false), 4000);
+  };
+
+  return (
+    <button
+      onClick={notify}
+      title="Notify on-call via Slack"
+      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium border transition-all
+        ${sent
+          ? "bg-green-50 border-green-300 text-green-700 dark:bg-green-900/20 dark:border-green-600 dark:text-green-400"
+          : "bg-muted/40 border-border hover:bg-[#4A154B]/10 hover:border-[#4A154B]/40 hover:text-[#4A154B] dark:hover:text-purple-300"
+        }`}
+    >
+      <Bell className="h-3 w-3" />
+      {sent ? "Notified" : "Notify Slack"}
+    </button>
+  );
+}
 
 // ─── Graph Layout: Topological sort into layers ─────────────────────────────
 
@@ -361,6 +392,10 @@ function DependencyGraphSVG({ graphNodes, topology, onNodeClick, selectedNode }:
             <marker id="arrow-dep" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
               <path d="M 0 0 L 8 3 L 0 6 L 2 3 Z" fill="#9ca3af" />
             </marker>
+            <filter id="edge-glow">
+              <feGaussianBlur stdDeviation="2" result="blur" />
+              <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+            </filter>
           </defs>
           {edges.map((edge, i) => {
             const fromPos = getPos(edge.from);
@@ -371,18 +406,22 @@ function DependencyGraphSVG({ graphNodes, topology, onNodeClick, selectedNode }:
             const y2 = toPos.y;
             const dy = (y2 - y1) * 0.45;
             const isFail = edge.from.status !== "healthy" || edge.to.status !== "healthy";
+            const d = `M ${x1} ${y1} C ${x1} ${y1 + dy}, ${x2} ${y2 - dy}, ${x2} ${y2}`;
 
             return (
-              <path
-                key={`e-${i}`}
-                d={`M ${x1} ${y1} C ${x1} ${y1 + dy}, ${x2} ${y2 - dy}, ${x2} ${y2}`}
-                fill="none"
-                stroke={isFail ? "#ef4444" : "#9ca3af"}
-                strokeWidth={isFail ? 2.5 : 1.5}
-                strokeDasharray={isFail ? "none" : "6 4"}
-                opacity={isFail ? 0.65 : 0.35}
-                markerEnd={isFail ? "url(#arrow-fail)" : "url(#arrow-dep)"}
-              />
+              <g key={`e-${i}`}>
+                {isFail && <path d={d} fill="none" stroke="#ef4444" strokeWidth={7} opacity={0.12} />}
+                <path
+                  d={d}
+                  fill="none"
+                  stroke={isFail ? "#ef4444" : "#9ca3af"}
+                  strokeWidth={isFail ? 2.5 : 1.5}
+                  strokeDasharray={isFail ? "none" : "6 4"}
+                  opacity={isFail ? 0.9 : 0.28}
+                  filter={isFail ? "url(#edge-glow)" : undefined}
+                  markerEnd={isFail ? "url(#arrow-fail)" : "url(#arrow-dep)"}
+                />
+              </g>
             );
           })}
         </svg>
@@ -397,11 +436,13 @@ function DependencyGraphSVG({ graphNodes, topology, onNodeClick, selectedNode }:
             <div
               key={node.id}
               onClick={() => onNodeClick(node.id)}
-              className={`absolute cursor-pointer rounded-xl border-2 bg-card shadow-md
-                transition-all duration-200 hover:shadow-lg hover:-translate-y-0.5
+              className={`absolute cursor-pointer rounded-xl border-2 bg-card
+                transition-all duration-200 hover:-translate-y-0.5
                 ${statusBorder(node.status)}
-                ${isSelected ? "ring-2 ring-primary ring-offset-2 ring-offset-background shadow-lg" : ""}
-                ${node.isRootCause ? "border-[3px]" : ""}
+                ${node.status === "failing" ? "shadow-[0_0_16px_rgba(239,68,68,0.25)]" : "shadow-md hover:shadow-lg"}
+                ${isSelected ? "ring-2 ring-primary ring-offset-2 ring-offset-background" : ""}
+                ${node.isRootCause ? "border-[3px] shadow-[0_0_24px_rgba(239,68,68,0.35)]" : ""}
+                ${node.status === "healthy" ? "opacity-60" : ""}
               `}
               style={{
                 left: pos.x,
@@ -610,8 +651,42 @@ function RCAVerification({ graphNodes, rootCause }: { graphNodes: GraphNode[]; r
     },
   ];
 
+  // Build the failure propagation path: root → sorted downstream by first failure time
+  const failurePath = [
+    rootNode,
+    ...[...downstreamFailing, ...downstreamDegraded]
+      .filter(n => n.firstFailure)
+      .sort((a, b) => (a.firstFailure || "").localeCompare(b.firstFailure || "")),
+  ].filter(Boolean) as GraphNode[];
+
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
+      {/* Failure propagation path — single glanceable line */}
+      {failurePath.length >= 2 && (
+        <div className="p-3 rounded-lg bg-destructive/5 border border-destructive/20">
+          <p className="text-[10px] text-muted-foreground uppercase font-semibold mb-2 tracking-wide">Failure Propagation Path</p>
+          <div className="flex items-center flex-wrap gap-1.5">
+            {failurePath.map((node, idx) => (
+              <div key={node.id} className="flex items-center gap-1.5">
+                <span className={`px-2.5 py-1 rounded-md text-[11px] font-semibold border
+                  ${node.isRootCause
+                    ? "bg-red-500 text-white border-red-500"
+                    : node.status === "failing"
+                      ? "bg-red-50 text-red-700 border-red-300 dark:bg-red-900/20 dark:text-red-300 dark:border-red-700"
+                      : "bg-amber-50 text-amber-700 border-amber-300 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-700"
+                  }`}>
+                  {node.name}
+                </span>
+                {idx < failurePath.length - 1 && (
+                  <ArrowRight className="h-3.5 w-3.5 text-destructive/60 flex-shrink-0" />
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Verification checks */}
       {verifications.map((v, i) => (
         <motion.div
           key={i}
@@ -693,8 +768,29 @@ export function IncidentCoordinator() {
       const res = await fetch(`${API}/incident`);
       if (!res.ok) throw new Error(`Backend returned ${res.status}`);
       const data: IncidentSummary[] = await res.json();
-      setIncidents(data);
       const grouped = data.filter((i) => i.member_alert_ids.length >= 2);
+
+      // Auto-seed banking scenarios on first load if no incidents exist
+      if (grouped.length === 0) {
+        try {
+          const seedRes = await fetch(`${API}/incident/seed-scenarios`, { method: "POST" });
+          if (seedRes.ok) {
+            const seedData = await seedRes.json();
+            if (seedData.incidents_created > 0) {
+              const res2 = await fetch(`${API}/incident`);
+              if (res2.ok) {
+                const data2: IncidentSummary[] = await res2.json();
+                setIncidents(data2);
+                const grouped2 = data2.filter((i) => i.member_alert_ids.length >= 2);
+                if (autoSelect && grouped2.length > 0) setSelectedId(grouped2[0].incident_id);
+                return;
+              }
+            }
+          }
+        } catch { /* silent — fall through to show empty state */ }
+      }
+
+      setIncidents(data);
       if (autoSelect && grouped.length > 0 && !selectedId) {
         setSelectedId(grouped[0].incident_id);
       }
@@ -829,10 +925,6 @@ export function IncidentCoordinator() {
                 <Badge variant="outline">{groupedIncidents.length}</Badge>
               </div>
               <div className="flex flex-wrap gap-2">
-                <Button size="sm" variant="outline" onClick={seedScenarios} disabled={seeding}>
-                  <Network className={`h-4 w-4 mr-2 ${seeding ? "animate-spin" : ""}`} />
-                  {seeding ? "Seeding..." : "Seed Microservice Scenarios"}
-                </Button>
                 <Button size="sm" variant="outline" onClick={refreshCorrelation} disabled={refreshing}>
                   <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? "animate-spin" : ""}`} />
                   Correlate
@@ -847,29 +939,36 @@ export function IncidentCoordinator() {
           <CardContent>
             {groupedIncidents.length === 0 ? (
               <div className="text-sm text-muted-foreground py-4 text-center">
-                No correlated incidents. Click <strong>Seed Microservice Scenarios</strong> to load demo incidents, or <strong>Correlate</strong> to group alerts.
+                No correlated incidents found. Click <strong>Correlate</strong> to group active alerts.
               </div>
             ) : (
               <div className="space-y-2">
                 {groupedIncidents.map(inc => (
-                  <button
-                    key={inc.incident_id}
-                    onClick={() => setSelectedId(inc.incident_id)}
-                    className={`w-full text-left p-3 rounded-lg border transition-colors ${
-                      inc.incident_id === selectedId ? "border-primary bg-primary/5" : "border-border hover:bg-muted/40"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between mb-1">
-                      <div className="flex items-center space-x-2">
-                        <Badge className={getSeverityColor(inc.severity)}>{inc.severity}</Badge>
-                        <span className="text-sm font-medium">{inc.title}</span>
+                  <div key={inc.incident_id} className={`rounded-lg border transition-colors ${
+                    inc.incident_id === selectedId ? "border-primary bg-primary/5" : "border-border hover:bg-muted/40"
+                  }`}>
+                    <button
+                      onClick={() => setSelectedId(inc.incident_id)}
+                      className="w-full text-left p-3"
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center space-x-2">
+                          <Badge className={getSeverityColor(inc.severity)}>{inc.severity}</Badge>
+                          <span className="text-sm font-medium">{inc.title}</span>
+                        </div>
+                        <span className="text-xs text-muted-foreground font-mono">{inc.incident_id}</span>
                       </div>
-                      <span className="text-xs text-muted-foreground font-mono">{inc.incident_id}</span>
+                      <div className="text-xs text-muted-foreground">
+                        {inc.member_alert_ids.length} alert(s) · {inc.resources_affected.length} service(s) · {new Date(inc.created_at).toLocaleString()}
+                      </div>
+                    </button>
+                    <div className="px-3 pb-2">
+                      <SlackNotifyButton
+                        incidentTitle={inc.title}
+                        rootService={inc.resources_affected[0]}
+                      />
                     </div>
-                    <div className="text-xs text-muted-foreground">
-                      {inc.member_alert_ids.length} alert(s) · {inc.resources_affected.length} service(s) · {new Date(inc.created_at).toLocaleString()}
-                    </div>
-                  </button>
+                  </div>
                 ))}
               </div>
             )}

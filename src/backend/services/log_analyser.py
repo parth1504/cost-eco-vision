@@ -41,27 +41,46 @@ def analyse_logs(
         healthy_end = error_start
         healthy_start = healthy_end - timedelta(hours=lookback_hours)
 
-        # Fetch error-window logs
-        error_logs = _query_logs(
+        error_keywords = (
+            "?ERROR ?Exception ?FATAL ?error ?exception "
+            "?\"status=5\" ?\"status=4\" ?timeout ?circuit ?CRITICAL ?WARNING "
+            "?failed ?failure ?retry ?exhausted ?refused ?unreachable"
+        )
+
+        # Fetch all recent events (no time filter — avoids clock-skew issues)
+        # then split into error-window vs healthy-window by message timestamp.
+        all_error_events = _query_logs(
             logs_client, log_group,
             start_time=error_start, end_time=now,
-            filter_pattern="?ERROR ?Exception ?FATAL ?error ?exception"
+            filter_pattern=error_keywords,
+            limit=200,
         )
-
-        # Fetch healthy-window logs (same pattern to see if errors existed before)
-        healthy_logs = _query_logs(
+        all_baseline_events = _query_logs(
             logs_client, log_group,
-            start_time=healthy_start, end_time=healthy_end,
-            filter_pattern="?ERROR ?Exception ?FATAL ?error ?exception"
-        )
-
-        # Also get normal operation logs for baseline
-        baseline_logs = _query_logs(
-            logs_client, log_group,
-            start_time=healthy_start, end_time=healthy_end,
+            start_time=error_start, end_time=now,
             filter_pattern=None,
-            limit=50,
+            limit=100,
         )
+
+        # Parse timestamps from log messages to split recent vs older
+        def _parse_log_ts(ev: Dict) -> Optional[float]:
+            msg = ev.get("message", "")
+            # App format: "2026-05-17T01:57:38 [WARNING] ..."
+            import re
+            m = re.match(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})", msg)
+            if m:
+                try:
+                    return datetime.fromisoformat(m.group(1)).timestamp()
+                except Exception:
+                    pass
+            # Fallback: use CW ingestion timestamp (ms → s)
+            return (ev.get("timestamp") or 0) / 1000
+
+        # Most-recent error_window_minutes are "error window", rest are "healthy"
+        cutoff = (datetime.utcnow() - timedelta(minutes=error_window_minutes)).timestamp()
+        error_logs = [e for e in all_error_events if (_parse_log_ts(e) or 0) >= cutoff]
+        healthy_logs = [e for e in all_error_events if (_parse_log_ts(e) or 0) < cutoff]
+        baseline_logs = all_baseline_events
 
         # Compute diff
         diff = _compute_log_diff(healthy_logs, error_logs)
@@ -136,22 +155,88 @@ def _query_logs(
     filter_pattern: Optional[str] = None,
     limit: int = 100,
 ) -> List[Dict[str, Any]]:
-    """Query CloudWatch Logs Insights or filter_log_events."""
+    """
+    Query CloudWatch logs. Tries filter_log_events first; if it returns nothing
+    (storedBytes=0 index lag is a known AWS issue), falls back to reading each
+    stream directly via get_log_events and filtering in Python.
+    """
+    start_ms = int(start_time.timestamp() * 1000)
+    end_ms = int(end_time.timestamp() * 1000)
+
+    # --- Attempt 1: filter_log_events (fast path) ---
     try:
-        params = {
+        params: Dict[str, Any] = {
             "logGroupName": log_group,
-            "startTime": int(start_time.timestamp() * 1000),
-            "endTime": int(end_time.timestamp() * 1000),
+            "startTime": start_ms,
+            "endTime": end_ms,
             "limit": limit,
         }
         if filter_pattern:
             params["filterPattern"] = filter_pattern
-
         response = client.filter_log_events(**params)
-        return response.get("events", [])
-
+        events = response.get("events", [])
+        if events:
+            return events
     except Exception as e:
-        logger.warning(f"Log query failed for {log_group}: {e}")
+        logger.warning(f"filter_log_events failed for {log_group}: {e}")
+
+    # --- Attempt 2: stream-by-stream fallback ---
+    # Reads the most recent events from each stream WITHOUT a time filter
+    # to avoid clock-skew issues (local machine time != EC2/CloudWatch time).
+    # Then filters by keyword in Python.
+    try:
+        streams_resp = client.describe_log_streams(
+            logGroupName=log_group,
+            orderBy="LastEventTime",
+            descending=True,
+            limit=10,
+        )
+        streams = streams_resp.get("logStreams", [])
+        if not streams:
+            return []
+
+        keywords = (
+            [kw.lstrip("?").lower() for kw in filter_pattern.split() if kw.strip()]
+            if filter_pattern else []
+        )
+        all_events: List[Dict[str, Any]] = []
+
+        for stream in streams:
+            stream_name = stream["logStreamName"]
+            try:
+                # Paginate backwards (up to 4 pages × 500 = 2000 events)
+                # so errors buried under INFO noise are still found.
+                next_token = None
+                for _ in range(4):
+                    kwargs: Dict[str, Any] = {
+                        "logGroupName": log_group,
+                        "logStreamName": stream_name,
+                        "startFromHead": False,
+                        "limit": 500,
+                    }
+                    if next_token:
+                        kwargs["nextBackwardToken"] = next_token
+                    resp = client.get_log_events(**kwargs)
+                    batch = resp.get("events", [])
+                    if not batch:
+                        break
+                    for ev in batch:
+                        msg = ev.get("message", "").lower()
+                        if not keywords or any(kw in msg for kw in keywords):
+                            all_events.append(ev)
+                    new_token = resp.get("nextBackwardToken")
+                    if not new_token or new_token == next_token:
+                        break
+                    next_token = new_token
+                    if len(all_events) >= limit:
+                        break
+            except Exception:
+                continue
+
+        all_events.sort(key=lambda e: e.get("timestamp", 0), reverse=True)
+        return all_events[:limit]
+    except Exception as e:
+        logger.warning(f"Stream fallback failed for {log_group}: {e}")
         return []
 
 
