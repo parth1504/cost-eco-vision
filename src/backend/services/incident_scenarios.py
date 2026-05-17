@@ -1,21 +1,13 @@
 """
-Microservice incident scenario seeder.
+Banking / Financial microservice incident scenarios.
 
-Creates realistic multi-service incidents with branching dependency graphs
-that demonstrate how failures propagate through distributed systems.
-
-Each scenario defines:
-- services: the microservice topology (nodes + their dependencies)
-- alerts: timestamped alerts placed on specific services
-- root_cause: which service is the actual root cause
-
-These are injected directly into the in-memory incident_store so the
-IncidentCoordinator UI can render them immediately.
+Two realistic cascading failures, each with exactly 5 services:
+  - 1-2 healthy services (isolated from the failure path)
+  - 3 failing/degraded services in a clear upstream->downstream chain
 """
 
 from datetime import datetime, timedelta
 from typing import Any, Dict, List
-import uuid
 
 from services.incident_store import upsert_alert, upsert_incident, set_alert_incident
 
@@ -25,14 +17,13 @@ def _ts(base: datetime, offset_seconds: int) -> str:
 
 
 SCENARIOS: List[Dict[str, Any]] = [
-    # ── Scenario 1: Payment Gateway Cascade ──────────────────────────────
-    # Root: Payment DB connection pool exhausted → Payment Service fails
-    # → Order Service can't process → API Gateway returns 5xx
-    # → Notification Service can't send confirmations
-    # → Dashboard shows stale data
+
+    # Scenario 1: Payment DB Outage
+    # Payment-DB -> Transaction-Service -> Payment-Gateway + Notification-Service
+    # Auth-Service stays healthy
     {
-        "id": "cascade-payment-db",
-        "title": "Payment DB Connection Pool Exhaustion → Order Processing Failure",
+        "id": "banking-payment-db-outage",
+        "title": "Payment DB Connection Exhaustion causing Transaction Processing Failure",
         "severity": "critical",
         "services": {
             "Payment-DB": {
@@ -40,163 +31,183 @@ SCENARIOS: List[Dict[str, Any]] = [
                 "depends_on": [],
                 "is_root_cause": True,
             },
-            "Payment-Service": {
+            "Transaction-Service": {
                 "type": "service",
                 "depends_on": ["Payment-DB"],
             },
-            "Order-Service": {
-                "type": "service",
-                "depends_on": ["Payment-Service", "Inventory-Cache"],
-            },
-            "Inventory-Cache": {
-                "type": "database",
-                "depends_on": [],
-            },
-            "API-Gateway": {
+            "Payment-Gateway": {
                 "type": "external",
-                "depends_on": ["Order-Service", "Auth-Service"],
-            },
-            "Auth-Service": {
-                "type": "service",
-                "depends_on": [],
+                "depends_on": ["Transaction-Service"],
             },
             "Notification-Service": {
                 "type": "service",
-                "depends_on": ["Order-Service"],
+                "depends_on": ["Transaction-Service"],
             },
-            "Dashboard-BFF": {
-                "type": "service",
-                "depends_on": ["Order-Service", "Analytics-Service"],
-            },
-            "Analytics-Service": {
+            "Auth-Service": {
                 "type": "service",
                 "depends_on": [],
             },
         },
         "alerts": [
-            # T+0: Root cause — DB pool exhaustion
-            {"service": "Payment-DB", "severity": "Critical", "offset": 0,
-             "message": "Connection pool exhausted: 100/100 active connections, 47 queued requests waiting. ProvisionedThroughputExceededException on table Transactions."},
-            {"service": "Payment-DB", "severity": "Critical", "offset": 15,
-             "message": "Write latency spike: p99=4200ms (normal: 12ms). DynamoDB consumed WCU=890, provisioned=200."},
-            # T+30s: Payment service starts failing
-            {"service": "Payment-Service", "severity": "Critical", "offset": 30,
-             "message": "Payment processing timeout: 34 requests failed in last 60s. Circuit breaker OPEN for downstream Payment-DB."},
-            {"service": "Payment-Service", "severity": "High", "offset": 45,
-             "message": "Retry storm detected: 200+ retries/min to Payment-DB. Exponential backoff not configured on legacy path."},
-            # T+60s: Order service can't process
-            {"service": "Order-Service", "severity": "Critical", "offset": 60,
-             "message": "Order creation failing: POST /api/v1/orders returning 500. Payment charge step timing out after 30s."},
-            {"service": "Order-Service", "severity": "High", "offset": 75,
-             "message": "Order queue depth growing: 342 pending orders. Dead letter queue receiving 12 messages/min."},
-            # T+90s: Upstream and sibling effects
-            {"service": "API-Gateway", "severity": "High", "offset": 90,
-             "message": "5xx error rate at 34.2% (threshold: 5%). Latency p99=8500ms. Auto-scaling triggered but ineffective — bottleneck is downstream."},
-            {"service": "Notification-Service", "severity": "Warning", "offset": 100,
-             "message": "Order confirmation emails delayed: 280 messages in backlog. Webhook delivery failing for partner integrations."},
-            {"service": "Dashboard-BFF", "severity": "Warning", "offset": 110,
-             "message": "Dashboard showing stale order data. Cache TTL expired but refresh failing due to Order-Service 503s."},
-            # Inventory and Auth stay healthy
-            {"service": "Inventory-Cache", "severity": "Medium", "offset": 120,
-             "message": "Cache hit rate dropped to 67% (normal: 95%). Inventory reads succeeding but order writes failing downstream."},
+            {
+                "service": "Payment-DB",
+                "severity": "Critical",
+                "offset": 0,
+                "message": (
+                    "Connection pool exhausted: 500/500 active connections, 248 queued. "
+                    "RDS write IOPS at ceiling (3000/3000). "
+                    "Deadlock rate 38/min on payment_transactions table."
+                ),
+            },
+            {
+                "service": "Payment-DB",
+                "severity": "Critical",
+                "offset": 18,
+                "message": (
+                    "Replication lag 47s on read replica (threshold: 5s). "
+                    "Primary still accepting but dropping writes silently. "
+                    "WAL archive queue 12 GB behind."
+                ),
+            },
+            {
+                "service": "Transaction-Service",
+                "severity": "Critical",
+                "offset": 30,
+                "message": (
+                    "Payment transaction timeout after 30s. "
+                    "847 transactions in PENDING state with no DB acknowledgement. "
+                    "Rollback queue depth: 1,204. Circuit breaker HALF-OPEN."
+                ),
+            },
+            {
+                "service": "Transaction-Service",
+                "severity": "High",
+                "offset": 52,
+                "message": (
+                    "Retry storm: 3,200 retries/min to Payment-DB. "
+                    "Thread pool saturation 48/50. p99 latency 28,400ms (SLA: 500ms). "
+                    "Partial debit risk on 312 accounts."
+                ),
+            },
+            {
+                "service": "Payment-Gateway",
+                "severity": "Critical",
+                "offset": 70,
+                "message": (
+                    "VISA/Mastercard settlement batch failed - 0 authorizations in 5 min. "
+                    "Authorization failure rate: 94%. Chargeback accumulation: 12/min. "
+                    "PCI compliance settlement window at risk."
+                ),
+            },
+            {
+                "service": "Notification-Service",
+                "severity": "High",
+                "offset": 85,
+                "message": (
+                    "Transaction confirmation SMS/email delivery stalled. "
+                    "2,341 notifications queued (threshold: 100). "
+                    "Webhook timeout to 14 partner banking systems. SLA breach in 8 min."
+                ),
+            },
         ],
     },
 
-    # ── Scenario 2: Auth Service Token Expiry Cascade ────────────────────
-    # Root: Auth Service JWT signing key rotation failed
-    # → All services using Auth fail token validation
-    # → User-Service, Product-Service, Cart-Service all degrade
-    # → CDN starts serving stale content
+    # Scenario 2: Fraud Detection Timeout
+    # Fraud-Detection -> Payment-Processor -> Mobile-API
+    # Account-DB and Auth-Service stay healthy
     {
-        "id": "cascade-auth-failure",
-        "title": "Auth Service Key Rotation Failure → Platform-Wide Authentication Breakdown",
+        "id": "banking-fraud-detection-timeout",
+        "title": "Fraud Detection Model Timeout causing Payment Authorization Block",
         "severity": "critical",
         "services": {
-            "Auth-Service": {
+            "Fraud-Detection": {
                 "type": "service",
-                "depends_on": ["Auth-DB"],
+                "depends_on": [],
                 "is_root_cause": True,
             },
-            "Auth-DB": {
-                "type": "database",
-                "depends_on": [],
-            },
-            "User-Service": {
+            "Payment-Processor": {
                 "type": "service",
-                "depends_on": ["Auth-Service", "User-DB"],
+                "depends_on": ["Fraud-Detection"],
             },
-            "User-DB": {
-                "type": "database",
-                "depends_on": [],
-            },
-            "Product-Service": {
-                "type": "service",
-                "depends_on": ["Auth-Service", "Product-DB"],
-            },
-            "Product-DB": {
-                "type": "database",
-                "depends_on": [],
-            },
-            "Cart-Service": {
-                "type": "service",
-                "depends_on": ["Auth-Service", "Product-Service"],
-            },
-            "Checkout-Service": {
-                "type": "service",
-                "depends_on": ["Cart-Service", "Payment-Gateway"],
-            },
-            "Payment-Gateway": {
+            "Mobile-API": {
                 "type": "external",
+                "depends_on": ["Payment-Processor"],
+            },
+            "Account-DB": {
+                "type": "database",
                 "depends_on": [],
             },
-            "CDN-Edge": {
-                "type": "infra",
-                "depends_on": ["Product-Service", "User-Service"],
-            },
-            "Mobile-BFF": {
+            "Auth-Service": {
                 "type": "service",
-                "depends_on": ["User-Service", "Product-Service", "Cart-Service"],
+                "depends_on": [],
             },
         },
         "alerts": [
-            # T+0: Root cause
-            {"service": "Auth-Service", "severity": "Critical", "offset": 0,
-             "message": "JWT signing key rotation failed: new key rejected by 3/5 replicas. Falling back to expired key — tokens issued in last 15min will fail validation."},
-            {"service": "Auth-Service", "severity": "Critical", "offset": 20,
-             "message": "Token validation error rate 78%. /auth/verify returning 401 for valid sessions. 12,000 affected users in last 5 minutes."},
-            # T+40s: Services that depend on Auth start failing
-            {"service": "User-Service", "severity": "High", "offset": 40,
-             "message": "Authentication middleware rejecting requests: 401 Unauthorized on 72% of API calls. User profile reads failing."},
-            {"service": "Product-Service", "severity": "High", "offset": 45,
-             "message": "Authenticated product queries failing. Personalized pricing unavailable — falling back to guest pricing. Revenue impact estimated."},
-            {"service": "Cart-Service", "severity": "Critical", "offset": 55,
-             "message": "Cart operations failing: cannot verify user identity. 450 active shopping sessions interrupted. Cart persistence at risk."},
-            # T+70s: Downstream cascade
-            {"service": "Checkout-Service", "severity": "Critical", "offset": 70,
-             "message": "Checkout flow blocked: Cart-Service returning 503. 89 in-flight purchases abandoned. Payment Gateway not reached."},
-            {"service": "Mobile-BFF", "severity": "High", "offset": 80,
-             "message": "Mobile app error rate 62%. All authenticated endpoints returning 401/503. App crash reports spiking from token refresh loops."},
-            {"service": "CDN-Edge", "severity": "Warning", "offset": 90,
-             "message": "CDN serving stale cached content. Origin (Product-Service, User-Service) returning errors — cache-on-error policy active."},
-            # Databases and Payment Gateway are fine
-            {"service": "Auth-DB", "severity": "Medium", "offset": 30,
-             "message": "Elevated read latency on auth_keys table: p99=85ms (normal: 8ms). Connection count normal. DB itself healthy — issue is application-level."},
+            {
+                "service": "Fraud-Detection",
+                "severity": "Critical",
+                "offset": 0,
+                "message": (
+                    "ML fraud scoring model OOM: GPU memory exhausted (16/16 GB). "
+                    "Inference p99=45s (SLA: 2s). Scoring queue: 12,000 transactions. "
+                    "Model reload failed - checkpoint corrupt after last hot-deploy."
+                ),
+            },
+            {
+                "service": "Fraud-Detection",
+                "severity": "High",
+                "offset": 22,
+                "message": (
+                    "Fallback rule-engine activated but scoring only 120 tx/s (normal: 4,000). "
+                    "High-value transactions >$5,000 auto-declined per policy FR-117."
+                ),
+            },
+            {
+                "service": "Payment-Processor",
+                "severity": "Critical",
+                "offset": 35,
+                "message": (
+                    "Fraud check blocking all payments: 0 transactions approved in 3 min. "
+                    "Worker thread pool full (200/200). "
+                    "Circuit breaker OPEN after 500 consecutive Fraud-Detection timeouts."
+                ),
+            },
+            {
+                "service": "Payment-Processor",
+                "severity": "High",
+                "offset": 58,
+                "message": (
+                    "ACH and wire transfer queue paused (compliance requirement). "
+                    "Card-not-present transactions suspended. "
+                    "Estimated revenue impact: $42,000/min."
+                ),
+            },
+            {
+                "service": "Mobile-API",
+                "severity": "Critical",
+                "offset": 75,
+                "message": (
+                    "Mobile checkout returning HTTP 503 to 78% of users. "
+                    "App crash reports: 1,240 in last 5 min. "
+                    "In-app error: 'Payment service temporarily unavailable'."
+                ),
+            },
         ],
     },
 ]
 
 
 def seed_scenario(scenario_id: str = None) -> Dict[str, Any]:
-    """
-    Seed one or all microservice incident scenarios into the in-memory store.
-    Returns the created incident(s).
-    """
+    """Seed one or all banking incident scenarios. Idempotent on incident ID."""
     results = []
-    scenarios = SCENARIOS if not scenario_id else [s for s in SCENARIOS if s["id"] == scenario_id]
+    scenarios = (
+        SCENARIOS if not scenario_id
+        else [s for s in SCENARIOS if s["id"] == scenario_id]
+    )
 
     for scenario in scenarios:
-        base_time = datetime.utcnow() - timedelta(minutes=10)
-        incident_id = f"INC-MICRO-{scenario['id']}"
+        base_time = datetime.utcnow() - timedelta(minutes=8)
+        incident_id = f"INC-BANK-{scenario['id']}"
 
         alert_ids = []
         for i, alert_def in enumerate(scenario["alerts"]):
@@ -208,7 +219,7 @@ def seed_scenario(scenario_id: str = None) -> Dict[str, Any]:
                 "message": alert_def["message"],
                 "severity": alert_def["severity"],
                 "source": alert_def["service"],
-                "resource_type": "Microservice",
+                "resource_type": "BankingService",
                 "timestamp": _ts(base_time, alert_def["offset"]),
                 "category": "reliability",
                 "affected_resources": [alert_def["service"]],
@@ -219,14 +230,14 @@ def seed_scenario(scenario_id: str = None) -> Dict[str, Any]:
             set_alert_incident(alert_id, incident_id)
             alert_ids.append(alert_id)
 
-        # Build the service topology metadata
-        services_meta = {}
-        for svc_name, svc_def in scenario["services"].items():
-            services_meta[svc_name] = {
+        services_meta = {
+            svc_name: {
                 "type": svc_def["type"],
                 "depends_on": svc_def["depends_on"],
                 "is_root_cause": svc_def.get("is_root_cause", False),
             }
+            for svc_name, svc_def in scenario["services"].items()
+        }
 
         incident = {
             "incident_id": incident_id,
@@ -237,7 +248,7 @@ def seed_scenario(scenario_id: str = None) -> Dict[str, Any]:
             "created_at": _ts(base_time, 0),
             "member_alert_ids": alert_ids,
             "resources_affected": list(scenario["services"].keys()),
-            "source_count": len(set(a["service"] for a in scenario["alerts"])),
+            "source_count": len({a["service"] for a in scenario["alerts"]}),
             "shared_tags": {},
             "service_topology": services_meta,
         }
