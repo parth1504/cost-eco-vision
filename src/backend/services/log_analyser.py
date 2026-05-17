@@ -41,33 +41,46 @@ def analyse_logs(
         healthy_end = error_start
         healthy_start = healthy_end - timedelta(hours=lookback_hours)
 
-        error_filter = (
+        error_keywords = (
             "?ERROR ?Exception ?FATAL ?error ?exception "
             "?\"status=5\" ?\"status=4\" ?timeout ?circuit ?CRITICAL ?WARNING "
             "?failed ?failure ?retry ?exhausted ?refused ?unreachable"
         )
 
-        # Fetch error-window logs
-        error_logs = _query_logs(
+        # Fetch all recent events (no time filter — avoids clock-skew issues)
+        # then split into error-window vs healthy-window by message timestamp.
+        all_error_events = _query_logs(
             logs_client, log_group,
             start_time=error_start, end_time=now,
-            filter_pattern=error_filter,
+            filter_pattern=error_keywords,
+            limit=200,
         )
-
-        # Fetch healthy-window logs (same pattern to see if errors existed before)
-        healthy_logs = _query_logs(
-            logs_client, log_group,
-            start_time=healthy_start, end_time=healthy_end,
-            filter_pattern=error_filter,
-        )
-
-        # Also get recent logs for baseline (show something even if no errors)
-        baseline_logs = _query_logs(
+        all_baseline_events = _query_logs(
             logs_client, log_group,
             start_time=error_start, end_time=now,
             filter_pattern=None,
             limit=100,
         )
+
+        # Parse timestamps from log messages to split recent vs older
+        def _parse_log_ts(ev: Dict) -> Optional[float]:
+            msg = ev.get("message", "")
+            # App format: "2026-05-17T01:57:38 [WARNING] ..."
+            import re
+            m = re.match(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})", msg)
+            if m:
+                try:
+                    return datetime.fromisoformat(m.group(1)).timestamp()
+                except Exception:
+                    pass
+            # Fallback: use CW ingestion timestamp (ms → s)
+            return (ev.get("timestamp") or 0) / 1000
+
+        # Most-recent error_window_minutes are "error window", rest are "healthy"
+        cutoff = (datetime.utcnow() - timedelta(minutes=error_window_minutes)).timestamp()
+        error_logs = [e for e in all_error_events if (_parse_log_ts(e) or 0) >= cutoff]
+        healthy_logs = [e for e in all_error_events if (_parse_log_ts(e) or 0) < cutoff]
+        baseline_logs = all_baseline_events
 
         # Compute diff
         diff = _compute_log_diff(healthy_logs, error_logs)
@@ -191,17 +204,32 @@ def _query_logs(
         for stream in streams:
             stream_name = stream["logStreamName"]
             try:
-                # Read most-recent events with no time filter — avoids clock skew
-                resp = client.get_log_events(
-                    logGroupName=log_group,
-                    logStreamName=stream_name,
-                    startFromHead=False,
-                    limit=min(limit, 500),
-                )
-                for ev in resp.get("events", []):
-                    msg = ev.get("message", "").lower()
-                    if not keywords or any(kw in msg for kw in keywords):
-                        all_events.append(ev)
+                # Paginate backwards (up to 4 pages × 500 = 2000 events)
+                # so errors buried under INFO noise are still found.
+                next_token = None
+                for _ in range(4):
+                    kwargs: Dict[str, Any] = {
+                        "logGroupName": log_group,
+                        "logStreamName": stream_name,
+                        "startFromHead": False,
+                        "limit": 500,
+                    }
+                    if next_token:
+                        kwargs["nextBackwardToken"] = next_token
+                    resp = client.get_log_events(**kwargs)
+                    batch = resp.get("events", [])
+                    if not batch:
+                        break
+                    for ev in batch:
+                        msg = ev.get("message", "").lower()
+                        if not keywords or any(kw in msg for kw in keywords):
+                            all_events.append(ev)
+                    new_token = resp.get("nextBackwardToken")
+                    if not new_token or new_token == next_token:
+                        break
+                    next_token = new_token
+                    if len(all_events) >= limit:
+                        break
             except Exception:
                 continue
 
