@@ -41,26 +41,32 @@ def analyse_logs(
         healthy_end = error_start
         healthy_start = healthy_end - timedelta(hours=lookback_hours)
 
+        error_filter = (
+            "?ERROR ?Exception ?FATAL ?error ?exception "
+            "?\"status=5\" ?\"status=4\" ?timeout ?circuit ?CRITICAL ?WARNING "
+            "?failed ?failure ?retry ?exhausted ?refused ?unreachable"
+        )
+
         # Fetch error-window logs
         error_logs = _query_logs(
             logs_client, log_group,
             start_time=error_start, end_time=now,
-            filter_pattern="?ERROR ?Exception ?FATAL ?error ?exception"
+            filter_pattern=error_filter,
         )
 
         # Fetch healthy-window logs (same pattern to see if errors existed before)
         healthy_logs = _query_logs(
             logs_client, log_group,
             start_time=healthy_start, end_time=healthy_end,
-            filter_pattern="?ERROR ?Exception ?FATAL ?error ?exception"
+            filter_pattern=error_filter,
         )
 
-        # Also get normal operation logs for baseline
+        # Also get recent logs for baseline (show something even if no errors)
         baseline_logs = _query_logs(
             logs_client, log_group,
-            start_time=healthy_start, end_time=healthy_end,
+            start_time=error_start, end_time=now,
             filter_pattern=None,
-            limit=50,
+            limit=100,
         )
 
         # Compute diff
