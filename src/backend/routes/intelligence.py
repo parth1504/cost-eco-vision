@@ -14,8 +14,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/intelligence", tags=["intelligence"])
 
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
-GITHUB_REPO = os.getenv("GITHUB_REPO", "")
-DEMO_REPO = os.getenv("DEMO_GITHUB_REPO", "https://github.com/YOUR_USERNAME/application_demo")
+_raw_repo = os.getenv("GITHUB_REPO", "")
+# Accept both "owner/repo" and full URLs like "https://github.com/owner/repo"
+if "github.com/" in _raw_repo:
+    GITHUB_REPO = "/".join(_raw_repo.rstrip("/").split("github.com/")[1].split("/")[:2])
+else:
+    GITHUB_REPO = _raw_repo
+DEMO_REPO = os.getenv("DEMO_GITHUB_REPO", "https://github.com/parth1504/application_demo")
 
 
 @router.post("/index")

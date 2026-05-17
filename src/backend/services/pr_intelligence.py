@@ -25,7 +25,11 @@ from services.codebase_index import get_codebase_index
 logger = logging.getLogger(__name__)
 
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
-REPO_NAME = os.getenv("GITHUB_REPO", "")
+_raw_repo = os.getenv("GITHUB_REPO", "")
+if "github.com/" in _raw_repo:
+    REPO_NAME = "/".join(_raw_repo.rstrip("/").split("github.com/")[1].split("/")[:2])
+else:
+    REPO_NAME = _raw_repo
 
 
 def analyze_pr(pr_number: int) -> Dict[str, Any]:
