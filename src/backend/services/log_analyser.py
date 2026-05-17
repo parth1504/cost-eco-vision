@@ -167,9 +167,10 @@ def _query_logs(
     except Exception as e:
         logger.warning(f"filter_log_events failed for {log_group}: {e}")
 
-    # --- Attempt 2: stream-by-stream fallback (handles storedBytes=0 lag) ---
-    # Also handles clock skew: anchor the window to the stream's last event
-    # timestamp instead of relying on the local machine's clock.
+    # --- Attempt 2: stream-by-stream fallback ---
+    # Reads the most recent events from each stream WITHOUT a time filter
+    # to avoid clock-skew issues (local machine time != EC2/CloudWatch time).
+    # Then filters by keyword in Python.
     try:
         streams_resp = client.describe_log_streams(
             logGroupName=log_group,
@@ -181,35 +182,21 @@ def _query_logs(
         if not streams:
             return []
 
-        # Detect clock skew: if stream's last event is far from our window,
-        # re-anchor the window relative to the stream's last event timestamp.
-        last_event_ms = max(
-            (s.get("lastEventTimestamp") or 0) for s in streams
-        )
-        window_ms = end_ms - start_ms  # preserve original window duration
-        if last_event_ms and abs(last_event_ms - end_ms) > 60_000 * 10:
-            # More than 10 min drift — re-anchor to stream time
-            logger.warning(
-                f"Clock skew detected: local_now={end_ms} stream_last={last_event_ms}. "
-                f"Re-anchoring query window."
-            )
-            end_ms = last_event_ms + 60_000  # +1 min buffer
-            start_ms = end_ms - window_ms
-
-        all_events: List[Dict[str, Any]] = []
         keywords = (
             [kw.lstrip("?").lower() for kw in filter_pattern.split() if kw.strip()]
             if filter_pattern else []
         )
+        all_events: List[Dict[str, Any]] = []
+
         for stream in streams:
             stream_name = stream["logStreamName"]
             try:
+                # Read most-recent events with no time filter — avoids clock skew
                 resp = client.get_log_events(
                     logGroupName=log_group,
                     logStreamName=stream_name,
-                    startTime=start_ms,
-                    endTime=end_ms,
-                    startFromHead=True,
+                    startFromHead=False,
+                    limit=min(limit, 500),
                 )
                 for ev in resp.get("events", []):
                     msg = ev.get("message", "").lower()
@@ -217,7 +204,8 @@ def _query_logs(
                         all_events.append(ev)
             except Exception:
                 continue
-        all_events.sort(key=lambda e: e.get("timestamp", 0))
+
+        all_events.sort(key=lambda e: e.get("timestamp", 0), reverse=True)
         return all_events[:limit]
     except Exception as e:
         logger.warning(f"Stream fallback failed for {log_group}: {e}")
