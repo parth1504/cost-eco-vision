@@ -142,22 +142,85 @@ def _query_logs(
     filter_pattern: Optional[str] = None,
     limit: int = 100,
 ) -> List[Dict[str, Any]]:
-    """Query CloudWatch Logs Insights or filter_log_events."""
+    """
+    Query CloudWatch logs. Tries filter_log_events first; if it returns nothing
+    (storedBytes=0 index lag is a known AWS issue), falls back to reading each
+    stream directly via get_log_events and filtering in Python.
+    """
+    start_ms = int(start_time.timestamp() * 1000)
+    end_ms = int(end_time.timestamp() * 1000)
+
+    # --- Attempt 1: filter_log_events (fast path) ---
     try:
-        params = {
+        params: Dict[str, Any] = {
             "logGroupName": log_group,
-            "startTime": int(start_time.timestamp() * 1000),
-            "endTime": int(end_time.timestamp() * 1000),
+            "startTime": start_ms,
+            "endTime": end_ms,
             "limit": limit,
         }
         if filter_pattern:
             params["filterPattern"] = filter_pattern
-
         response = client.filter_log_events(**params)
-        return response.get("events", [])
-
+        events = response.get("events", [])
+        if events:
+            return events
     except Exception as e:
-        logger.warning(f"Log query failed for {log_group}: {e}")
+        logger.warning(f"filter_log_events failed for {log_group}: {e}")
+
+    # --- Attempt 2: stream-by-stream fallback (handles storedBytes=0 lag) ---
+    # Also handles clock skew: anchor the window to the stream's last event
+    # timestamp instead of relying on the local machine's clock.
+    try:
+        streams_resp = client.describe_log_streams(
+            logGroupName=log_group,
+            orderBy="LastEventTime",
+            descending=True,
+            limit=10,
+        )
+        streams = streams_resp.get("logStreams", [])
+        if not streams:
+            return []
+
+        # Detect clock skew: if stream's last event is far from our window,
+        # re-anchor the window relative to the stream's last event timestamp.
+        last_event_ms = max(
+            (s.get("lastEventTimestamp") or 0) for s in streams
+        )
+        window_ms = end_ms - start_ms  # preserve original window duration
+        if last_event_ms and abs(last_event_ms - end_ms) > 60_000 * 10:
+            # More than 10 min drift — re-anchor to stream time
+            logger.warning(
+                f"Clock skew detected: local_now={end_ms} stream_last={last_event_ms}. "
+                f"Re-anchoring query window."
+            )
+            end_ms = last_event_ms + 60_000  # +1 min buffer
+            start_ms = end_ms - window_ms
+
+        all_events: List[Dict[str, Any]] = []
+        keywords = (
+            [kw.lstrip("?").lower() for kw in filter_pattern.split() if kw.strip()]
+            if filter_pattern else []
+        )
+        for stream in streams:
+            stream_name = stream["logStreamName"]
+            try:
+                resp = client.get_log_events(
+                    logGroupName=log_group,
+                    logStreamName=stream_name,
+                    startTime=start_ms,
+                    endTime=end_ms,
+                    startFromHead=True,
+                )
+                for ev in resp.get("events", []):
+                    msg = ev.get("message", "").lower()
+                    if not keywords or any(kw in msg for kw in keywords):
+                        all_events.append(ev)
+            except Exception:
+                continue
+        all_events.sort(key=lambda e: e.get("timestamp", 0))
+        return all_events[:limit]
+    except Exception as e:
+        logger.warning(f"Stream fallback failed for {log_group}: {e}")
         return []
 
 
