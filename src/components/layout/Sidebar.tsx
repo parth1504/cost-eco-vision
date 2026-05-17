@@ -31,14 +31,14 @@ const navigation = [
   { name: "Settings", href: "/settings", icon: Settings },
 ];
 
-const engineeringIntelligence = {
-  name: "Engineering Intelligence",
-  icon: Cpu,
-  items: [
-    { name: "Log Analyzer", href: "/engineering/log-analyzer", icon: Terminal },
-    { name: "PR Reviewer", href: "/engineering/pr-reviewer", icon: GitPullRequest },
-  ],
-};
+// const engineeringIntelligence = {
+//   name: "Engineering Intelligence",
+//   icon: Cpu,
+//   items: [
+//     { name: "Log Analyzer", href: "/engineering/log-analyzer", icon: Terminal },
+//     { name: "PR Reviewer", href: "/engineering/pr-reviewer", icon: GitPullRequest },
+//   ],
+// };
 
 interface SidebarProps {
   collapsed: boolean;
@@ -47,9 +47,9 @@ interface SidebarProps {
 
 export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const location = useLocation();
-  const groupActive = engineeringIntelligence.items.some(
-    (i) => location.pathname === i.href
-  );
+  // const groupActive = engineeringIntelligence.items.some(
+  //   (i) => location.pathname === i.href
+  // );
   const [groupOpen, setGroupOpen] = useState(true);
 
   return (
@@ -140,7 +140,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
           })}
 
           {/* Engineering Intelligence Group */}
-          <div className="pt-2">
+          {/* <div className="pt-2">
             {!collapsed && (
               <button
                 onClick={() => setGroupOpen((o) => !o)}
@@ -194,7 +194,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
                 })}
               </div>
             )}
-          </div>
+          </div> */}
         </div>
       </nav>
 
