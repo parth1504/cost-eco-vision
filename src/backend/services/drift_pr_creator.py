@@ -144,14 +144,15 @@ def create_drift_fix_pr(
         tf_dir: Path to Terraform files
     """
     token = github_token or os.getenv("GITHUB_TOKEN")
-    repo_name = github_repo or os.getenv("GITHUB_REPO")
-    
+    repo_name = github_repo or os.getenv("TERRAFORM_REPO")
+    print(f"DEBUG: create_drift_fix_pr called with drift={drift}, fix_direction={fix_direction}, repo_name={repo_name}")
     if not token or not repo_name:
-        raise ValueError("GITHUB_TOKEN and GITHUB_REPO must be set")
+        print(f"DEBUG: Missing required environment variables")
+        raise ValueError("GITHUB_TOKEN and TERRAFORM_REPO must be set")
     
     g = Github(token)
     repo = g.get_repo(repo_name)
-    
+    print(f"DEBUG: Connected to GitHub repo: {repo_name}, creating PR...")
     base_branch = "main"
     branch_name = f"drift-fix-{drift['resource_id']}-{drift['field']}-{os.urandom(4).hex()}"
     
