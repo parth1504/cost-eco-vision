@@ -144,7 +144,11 @@ def create_drift_fix_pr(
         tf_dir: Path to Terraform files
     """
     token = github_token or os.getenv("GITHUB_TOKEN")
-    repo_name = github_repo or os.getenv("TERRAFORM_REPO")
+    _raw_repo = github_repo or os.getenv("TERRAFORM_REPO") or ""
+    # Normalise full URL → owner/repo (PyGithub rejects full URLs)
+    if "github.com/" in _raw_repo:
+        _raw_repo = "/".join(_raw_repo.split("github.com/")[1].split("/")[:2])
+    repo_name = _raw_repo.rstrip("/")
     print(f"DEBUG: create_drift_fix_pr called with drift={drift}, fix_direction={fix_direction}, repo_name={repo_name}")
     if not token or not repo_name:
         print(f"DEBUG: Missing required environment variables")
