@@ -10,7 +10,8 @@ import { Resources } from "@/pages/Resources";
 import { CostOptimization } from "@/pages/CostOptimization";
 import { Security } from "@/pages/Security";
 import { Settings } from "@/pages/Settings";
-import { LogAnalyzer } from "@/pages/LogAnalyzer";
+import { LogAnalyser } from "@/pages/LogAnalyser";
+// import { LogAnalyzer } from "@/pages/LogAnalyzer";
 import { PRReviewer } from "@/pages/PRReviewer";
 import NotFound from "./pages/NotFound";
 
@@ -27,10 +28,11 @@ const App = () => (
             <Route path="/" element={<Overview />} />
             <Route path="/alerts" element={<Alerts />} />
             <Route path="/resources" element={<Resources />} />
-            <Route path="/cost-optimization" element={<CostOptimization />} />
+            <Route path="/optimization" element={<CostOptimization />} />
             <Route path="/security" element={<Security />} />
             <Route path="/settings" element={<Settings />} />
-            <Route path="/engineering/log-analyzer" element={<LogAnalyzer />} />
+            <Route path="/log-analyser" element={<LogAnalyser />} />
+            <Route path="/engineering/log-analyzer" element={<LogAnalyser />} />
             <Route path="/engineering/pr-reviewer" element={<PRReviewer />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />

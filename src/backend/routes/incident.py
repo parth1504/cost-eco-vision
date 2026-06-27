@@ -12,6 +12,7 @@ from services.incidents import (
 )
 from services.incident_agent import analyze_incident
 from services.correlation_layer2 import run_layer2_correlation
+from services.incident_scenarios import seed_scenario, get_all_scenario_ids
 from connections.db import get_incident
 
 router = APIRouter(prefix="/incident", tags=["incident"])
@@ -37,6 +38,18 @@ async def correlate_layer2():
         return run_layer2_correlation()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Layer-2 correlation failed: {e}")
+
+
+@router.post("/seed-scenarios")
+async def seed_microservice_scenarios(scenario_id: str = None):
+    """Seed realistic microservice incident scenarios for demo/presentation."""
+    return seed_scenario(scenario_id)
+
+
+@router.get("/scenarios")
+async def list_scenario_ids():
+    """List available scenario IDs."""
+    return get_all_scenario_ids()
 
 
 @router.get("")

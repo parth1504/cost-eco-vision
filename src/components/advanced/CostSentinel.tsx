@@ -88,7 +88,7 @@ export function CostSentinel() {
       </motion.div>
 
       {/* Gamified Leaderboard */}
-      <motion.div variants={itemVariants}>
+      {/* <motion.div variants={itemVariants}>
         <Card className="dashboard-card">
           <CardHeader>
             <CardTitle className="flex items-center space-x-2">
@@ -161,7 +161,7 @@ export function CostSentinel() {
             )}
           </CardContent>
         </Card>
-      </motion.div>
+      </motion.div> */}
     </div>
   );
 }

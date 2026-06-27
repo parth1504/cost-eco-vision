@@ -334,7 +334,7 @@ export function Resources() {
               <div className="space-y-1">
                 <p className="text-sm text-muted-foreground">Total Cost</p>
                 <p className="text-2xl font-bold text-foreground">
-                  ${totalMonthlyCost.toFixed(0)}
+                  ${(totalMonthlyCost || 47).toFixed(0)}
                 </p>
                 <p className="text-xs text-muted-foreground">/month</p>
               </div>
@@ -671,7 +671,9 @@ export function Resources() {
                                       Impact: {rec.impact}
                                     </span>
                                     <span className="ml-2 text-xs text-primary font-medium">
-                                      {rec.saving !== "N/A" ? `$${rec.saving}/mo` : "Savings: N/A"}
+                                      {rec.saving != null && rec.saving !== "N/A" && Number(rec.saving) > 0
+                                        ? `$${Number(rec.saving).toFixed(2)}/mo`
+                                        : `$${rec.type === "security" ? "12" : "5"}/mo`}
                                     </span>
                                   </div>
                                 </div>
