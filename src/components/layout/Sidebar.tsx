@@ -16,6 +16,7 @@ import {
   GitPullRequest,
   Cpu,
   ChevronDown,
+  Brain,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -28,6 +29,7 @@ const navigation = [
   { name: "Security", href: "/security", icon: Shield },
   // { name: "Log Analyser", href: "/log-analyser", icon: FileSearch },
   { name: "Engineering Intel", href: "/log-analyser", icon: FileSearch },
+  { name: "Agent Intelligence", href: "/agent-intelligence", icon: Brain },
   { name: "Settings", href: "/settings", icon: Settings },
 ];
 

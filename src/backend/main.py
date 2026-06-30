@@ -14,6 +14,7 @@ from routes.leaderboard import router as leaderboard_router
 from routes.notification import router as notification_router
 from routes.logs import router as logs_router
 from routes.intelligence import router as intelligence_router
+from routes.agent_api import router as agent_router
 
 app = FastAPI(title="Cloud Management API")
 
@@ -83,6 +84,9 @@ app.include_router(logs_router)
 
 # Engineering intelligence endpoints
 app.include_router(intelligence_router)
+
+# Multi-agent system endpoints
+app.include_router(agent_router)
 
 if __name__ == "__main__":
     import uvicorn

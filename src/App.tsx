@@ -13,6 +13,7 @@ import { Settings } from "@/pages/Settings";
 import { LogAnalyser } from "@/pages/LogAnalyser";
 // import { LogAnalyzer } from "@/pages/LogAnalyzer";
 import { PRReviewer } from "@/pages/PRReviewer";
+import { AgentDashboard } from "@/pages/AgentDashboard";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -34,6 +35,7 @@ const App = () => (
             <Route path="/log-analyser" element={<LogAnalyser />} />
             <Route path="/engineering/log-analyzer" element={<LogAnalyser />} />
             <Route path="/engineering/pr-reviewer" element={<PRReviewer />} />
+            <Route path="/agent-intelligence" element={<AgentDashboard />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>

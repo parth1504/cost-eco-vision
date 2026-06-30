@@ -12,5 +12,9 @@ boto3==1.43.2
 google-generativeai
 openai>=1.0.0
 chromadb>=0.4.0
+websockets>=12.0
+opentelemetry-api>=1.20.0
+opentelemetry-sdk>=1.20.0
+opentelemetry-exporter-otlp>=1.20.0
 # Bedrock Converse API is used via boto3 — no extra deps needed.
 # (anthropic SDK no longer required since we moved to provider-agnostic Converse.)
