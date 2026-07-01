@@ -1,17 +1,18 @@
 """
-REST + WebSocket API for the multi-agent system.
+REST + WebSocket API for the LangGraph multi-agent system.
 
 Endpoints:
-  - POST /agent/analyze        — Run multi-agent analysis on resources
-  - GET  /agent/session/{id}   — Get session state and trace
-  - GET  /agent/sessions       — List recent sessions
+  - POST /agent/analyze           — Run multi-agent analysis via LangGraph
+  - POST /agent/analyze/stream    — Stream node-by-node results via SSE
+  - GET  /agent/session/{id}      — Get session state (from LangGraph checkpointer)
+  - GET  /agent/sessions          — List recent sessions
   - POST /agent/session/{id}/handoff — Create handoff token
-  - POST /agent/resume/{handoff_id} — Resume from handoff
-  - GET  /agent/agents         — List registered agents
-  - GET  /agent/trace/{id}     — Get full trace for a session
-  - GET  /agent/evaluation     — Get evaluation metrics
-  - GET  /agent/memory/stats   — Memory system stats
-  - WS   /agent/ws/{session}   — Real-time trace stream
+  - POST /agent/resume/{handoff_id}  — Resume from handoff
+  - GET  /agent/trace/{id}        — Get trace data
+  - GET  /agent/evaluation        — Get evaluation metrics
+  - GET  /agent/memory/stats      — Memory system stats
+  - GET  /agent/graph             — Get graph topology for visualization
+  - WS   /agent/ws/{session}      — Real-time event stream
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ import logging
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -44,7 +46,7 @@ class HandoffResponse(BaseModel):
 
 @router.post("/analyze")
 async def analyze_resources(request: AnalyzeRequest):
-    """Run multi-agent analysis on a set of resources."""
+    """Run multi-agent analysis via LangGraph."""
     from agent.core.orchestrator import MultiAgentOrchestrator
 
     orchestrator = MultiAgentOrchestrator()
@@ -52,15 +54,31 @@ async def analyze_resources(request: AnalyzeRequest):
     return result
 
 
+@router.post("/analyze/stream")
+async def analyze_stream(request: AnalyzeRequest):
+    """Stream analysis results node-by-node via Server-Sent Events."""
+    from agent.core.orchestrator import MultiAgentOrchestrator
+
+    orchestrator = MultiAgentOrchestrator()
+
+    async def event_generator():
+        for snapshot in orchestrator.stream(request.resources, session_id=request.session_id):
+            yield f"data: {json.dumps(snapshot, default=str)}\n\n"
+        yield "data: {\"event\": \"complete\"}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
 @router.get("/session/{session_id}")
 async def get_session(session_id: str):
-    """Get the state and trace of a specific session."""
-    from agent.core.session import session_manager
+    """Get session state from LangGraph checkpointer or memory."""
+    from agent.core.orchestrator import MultiAgentOrchestrator
 
-    session = session_manager.get_session(session_id)
-    if not session:
+    orchestrator = MultiAgentOrchestrator()
+    state = orchestrator.get_session_state(session_id)
+    if not state:
         return {"error": "Session not found", "session_id": session_id}
-    return session
+    return state
 
 
 @router.get("/sessions")
@@ -92,16 +110,9 @@ async def resume_from_handoff(handoff_id: str):
     return session.to_dict()
 
 
-@router.get("/agents")
-async def list_agents():
-    """List all registered agents and their capabilities."""
-    from agent.core.registry import agent_registry
-    return {"agents": agent_registry.list_agents()}
-
-
 @router.get("/trace/{trace_id}")
 async def get_trace(trace_id: str):
-    """Get the full OpenTelemetry trace for a session."""
+    """Get trace data for a session."""
     from agent.core.observability import trace_collector
     return {
         "trace_id": trace_id,
@@ -131,18 +142,63 @@ async def get_memory_stats():
     }
 
 
-@router.get("/messages/{trace_id}")
-async def get_messages(trace_id: str):
-    """Get the full agent conversation for a trace."""
-    from agent.core.registry import message_bus
-    return {
-        "trace_id": trace_id,
-        "messages": message_bus.get_conversation(trace_id),
-        "interaction_graph": message_bus.get_agent_interactions(trace_id),
-    }
+@router.get("/graph")
+async def get_graph_topology():
+    """Get the LangGraph topology for UI visualization."""
+    from agent.core.graph import compiled_graph
+
+    try:
+        graph_data = compiled_graph.get_graph()
+        nodes = [
+            {"id": node_id, "type": "agent" if node_id not in ("__start__", "__end__") else "control"}
+            for node_id in graph_data.nodes
+        ]
+        edges = [
+            {
+                "source": edge.source,
+                "target": edge.target,
+                "conditional": edge.conditional,
+            }
+            for edge in graph_data.edges
+        ]
+        return {"nodes": nodes, "edges": edges}
+    except Exception as e:
+        logger.warning("Could not extract graph topology: %s", e)
+        return {
+            "nodes": [
+                {"id": "supervisor", "type": "agent"},
+                {"id": "ec2_specialist", "type": "agent"},
+                {"id": "s3_specialist", "type": "agent"},
+                {"id": "dynamodb_specialist", "type": "agent"},
+                {"id": "critique", "type": "agent"},
+                {"id": "refine", "type": "agent"},
+                {"id": "correlate", "type": "agent"},
+                {"id": "verify", "type": "agent"},
+                {"id": "evaluate", "type": "agent"},
+            ],
+            "edges": [
+                {"source": "supervisor", "target": "ec2_specialist", "conditional": True},
+                {"source": "supervisor", "target": "s3_specialist", "conditional": True},
+                {"source": "supervisor", "target": "dynamodb_specialist", "conditional": True},
+                {"source": "supervisor", "target": "critique", "conditional": True},
+                {"source": "supervisor", "target": "refine", "conditional": True},
+                {"source": "supervisor", "target": "correlate", "conditional": True},
+                {"source": "supervisor", "target": "verify", "conditional": True},
+                {"source": "supervisor", "target": "evaluate", "conditional": True},
+                {"source": "ec2_specialist", "target": "aggregate", "conditional": False},
+                {"source": "s3_specialist", "target": "aggregate", "conditional": False},
+                {"source": "dynamodb_specialist", "target": "aggregate", "conditional": False},
+                {"source": "aggregate", "target": "supervisor", "conditional": False},
+                {"source": "critique", "target": "supervisor", "conditional": False},
+                {"source": "refine", "target": "supervisor", "conditional": False},
+                {"source": "correlate", "target": "supervisor", "conditional": False},
+                {"source": "verify", "target": "supervisor", "conditional": False},
+                {"source": "evaluate", "target": "__end__", "conditional": False},
+            ],
+        }
 
 
-# ─── WebSocket for Real-time Trace Streaming ────────────────────────────────
+# ─── WebSocket for Real-time Event Streaming ────────────────────────────────
 
 class ConnectionManager:
     """Manages WebSocket connections for real-time trace streaming."""
@@ -152,9 +208,7 @@ class ConnectionManager:
 
     async def connect(self, session_id: str, websocket: WebSocket):
         await websocket.accept()
-        if session_id not in self._connections:
-            self._connections[session_id] = []
-        self._connections[session_id].append(websocket)
+        self._connections.setdefault(session_id, []).append(websocket)
 
     def disconnect(self, session_id: str, websocket: WebSocket):
         conns = self._connections.get(session_id, [])
@@ -179,17 +233,13 @@ ws_manager = ConnectionManager()
 @router.websocket("/ws/{session_id}")
 async def websocket_trace(websocket: WebSocket, session_id: str):
     """
-    WebSocket endpoint for real-time agent trace streaming.
+    WebSocket for real-time agent trace streaming.
 
-    The agentic UI connects here to see live:
-      - Agent decisions as they happen
-      - Messages between agents
-      - Verification gate results
-      - Recommendation generation progress
+    Streams LangGraph node transitions, span events, and metrics
+    to the frontend dashboard as they happen.
     """
     await ws_manager.connect(session_id, websocket)
 
-    # Register a trace listener that forwards events to this WebSocket
     from agent.core.observability import trace_collector
 
     loop = asyncio.get_event_loop()
@@ -197,10 +247,7 @@ async def websocket_trace(websocket: WebSocket, session_id: str):
     def on_trace_event(event_type: str, data: Dict[str, Any]):
         if data.get("trace_id", "").startswith(session_id[:8]):
             asyncio.run_coroutine_threadsafe(
-                ws_manager.broadcast(session_id, {
-                    "event": event_type,
-                    "data": data,
-                }),
+                ws_manager.broadcast(session_id, {"event": event_type, "data": data}),
                 loop,
             )
 
@@ -210,10 +257,8 @@ async def websocket_trace(websocket: WebSocket, session_id: str):
         while True:
             data = await websocket.receive_text()
             msg = json.loads(data)
-
             if msg.get("type") == "ping":
                 await websocket.send_json({"type": "pong"})
-
     except WebSocketDisconnect:
         pass
     finally:

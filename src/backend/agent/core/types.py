@@ -1,10 +1,9 @@
 """
-Unified type system for the multi-agent framework.
+Shared types for the multi-agent framework.
 
-Every agent in the system (EC2, S3, DynamoDB, Critique, Correlation)
-communicates through these shared types. The existing per-agent types
-(ec2_agent/types.py etc.) remain for domain-specific telemetry bundles,
-but all inter-agent messages and orchestration state use these.
+Defines enums and dataclasses used across modules (guardrails, session,
+evaluation). Agent communication uses plain dicts via the LangGraph state;
+these types handle verification gates and session lifecycle.
 """
 
 from __future__ import annotations
@@ -14,29 +13,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
-
-
-class AgentRole(str, Enum):
-    EC2_SPECIALIST = "ec2_specialist"
-    S3_SPECIALIST = "s3_specialist"
-    DYNAMODB_SPECIALIST = "dynamodb_specialist"
-    CRITIQUE = "critique"
-    CORRELATION = "correlation"
-    ROOT_CAUSE = "root_cause"
-    ORCHESTRATOR = "orchestrator"
-
-
-class MessageType(str, Enum):
-    REQUEST = "request"
-    RESPONSE = "response"
-    BROADCAST = "broadcast"
-    CRITIQUE_REQUEST = "critique_request"
-    CRITIQUE_RESPONSE = "critique_response"
-    CORRELATION_REQUEST = "correlation_request"
-    CORRELATION_RESPONSE = "correlation_response"
-    REFINEMENT = "refinement"
-    VERIFICATION = "verification"
-    HANDOFF = "handoff"
 
 
 class SessionStatus(str, Enum):
@@ -52,60 +28,6 @@ class VerificationResult(str, Enum):
     FAILED = "failed"
     NEEDS_REVIEW = "needs_review"
     SKIPPED = "skipped"
-
-
-@dataclass
-class AgentMessage:
-    """A message between any two agents in the system."""
-    id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    from_agent: str = ""
-    to_agent: str = ""
-    message_type: MessageType = MessageType.REQUEST
-    payload: Dict[str, Any] = field(default_factory=dict)
-    reply_to: Optional[str] = None
-    timestamp: datetime = field(default_factory=datetime.utcnow)
-    trace_id: str = ""
-    span_id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "id": self.id,
-            "from_agent": self.from_agent,
-            "to_agent": self.to_agent,
-            "message_type": self.message_type.value,
-            "payload": self.payload,
-            "reply_to": self.reply_to,
-            "timestamp": self.timestamp.isoformat(),
-            "trace_id": self.trace_id,
-            "span_id": self.span_id,
-        }
-
-
-@dataclass
-class AgentDecision:
-    """Records a single decision point for traceability."""
-    agent: str
-    action: str
-    reasoning: str
-    inputs: Dict[str, Any] = field(default_factory=dict)
-    outputs: Dict[str, Any] = field(default_factory=dict)
-    confidence: float = 0.0
-    duration_ms: float = 0.0
-    token_usage: Dict[str, int] = field(default_factory=dict)
-    timestamp: datetime = field(default_factory=datetime.utcnow)
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "agent": self.agent,
-            "action": self.action,
-            "reasoning": self.reasoning,
-            "inputs": self.inputs,
-            "outputs": self.outputs,
-            "confidence": self.confidence,
-            "duration_ms": self.duration_ms,
-            "token_usage": self.token_usage,
-            "timestamp": self.timestamp.isoformat(),
-        }
 
 
 @dataclass

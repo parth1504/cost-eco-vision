@@ -11,8 +11,6 @@ import {
   XCircle,
   AlertTriangle,
   Play,
-  Pause,
-  RotateCcw,
   Zap,
   Eye,
   ChevronDown,
@@ -22,6 +20,9 @@ import {
   Database,
   HardDrive,
   BarChart3,
+  GitBranch,
+  Layers,
+  ExternalLink,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -33,9 +34,17 @@ import { Separator } from "@/components/ui/separator";
 
 const API_BASE = "http://localhost:8000";
 
-interface AgentInfo {
-  agent_id: string;
-  capabilities: string[];
+// ─── Types ────────────────────────────────────────────────────────────────
+
+interface GraphNode {
+  id: string;
+  type: string;
+}
+
+interface GraphEdge {
+  source: string;
+  target: string;
+  conditional: boolean;
 }
 
 interface TraceSpan {
@@ -53,24 +62,34 @@ interface TraceSpan {
 }
 
 interface AgentMessage {
-  id: string;
   from_agent: string;
   to_agent: string;
-  message_type: string;
-  payload: Record<string, unknown>;
-  timestamp: string;
-  trace_id: string;
+  content: string;
+  timestamp: number;
 }
 
 interface Decision {
   agent: string;
   action: string;
   reasoning: string;
+  timestamp: number;
+}
+
+interface VerificationGate {
+  gate_name: string;
+  result: string;
+  details: string;
+  threshold?: number;
+  actual_value?: number;
+}
+
+interface Correlation {
+  type: string;
+  title: string;
+  description: string;
   confidence: number;
-  duration_ms: number;
-  timestamp: string;
-  inputs: Record<string, unknown>;
-  outputs: Record<string, unknown>;
+  combined_savings?: number;
+  resources_involved?: string[];
 }
 
 interface SessionInfo {
@@ -78,16 +97,11 @@ interface SessionInfo {
   trace_id: string;
   status: string;
   resource_count: number;
+  recommendation_count: number;
   message_count: number;
   decision_count: number;
-  recommendation_count: number;
-  started_at: string;
-  completed_at: string | null;
-  verification_gates: Array<{
-    gate_name: string;
-    result: string;
-    details: string;
-  }>;
+  duration_ms?: number;
+  error?: string;
 }
 
 interface AnalysisResult {
@@ -95,40 +109,53 @@ interface AnalysisResult {
   recommendations: Array<Record<string, unknown>>;
   decisions: Decision[];
   messages: AgentMessage[];
-  trace: TraceSpan[];
-  interaction_graph: {
-    nodes: Array<{ id: string }>;
-    edges: Array<{ from: string; to: string; type: string; timestamp: string }>;
-  };
+  correlations: Correlation[];
   verification_summary: {
     total_gates: number;
     passed: number;
     failed: number;
     needs_review: number;
   };
+  verification_gates: VerificationGate[];
   evaluation: {
     total_metrics: number;
     averages: Record<string, number>;
     benchmark_pass_rate: number;
+    benchmark_count: number;
   };
 }
 
+// ─── Constants ────────────────────────────────────────────────────────────
+
 const AGENT_COLORS: Record<string, string> = {
-  orchestrator: "bg-purple-500/20 text-purple-400 border-purple-500/30",
+  supervisor: "bg-purple-500/20 text-purple-400 border-purple-500/30",
   ec2_specialist: "bg-orange-500/20 text-orange-400 border-orange-500/30",
   s3_specialist: "bg-blue-500/20 text-blue-400 border-blue-500/30",
   dynamodb_specialist: "bg-green-500/20 text-green-400 border-green-500/30",
   critique: "bg-red-500/20 text-red-400 border-red-500/30",
   correlation: "bg-cyan-500/20 text-cyan-400 border-cyan-500/30",
+  correlate: "bg-cyan-500/20 text-cyan-400 border-cyan-500/30",
+  refine: "bg-amber-500/20 text-amber-400 border-amber-500/30",
+  verify: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
+  evaluate: "bg-indigo-500/20 text-indigo-400 border-indigo-500/30",
+  aggregate: "bg-gray-500/20 text-gray-400 border-gray-500/30",
+  aggregator: "bg-gray-500/20 text-gray-400 border-gray-500/30",
+  dispatch: "bg-violet-500/20 text-violet-400 border-violet-500/30",
 };
 
 const AGENT_ICONS: Record<string, typeof Brain> = {
-  orchestrator: Brain,
+  supervisor: Brain,
   ec2_specialist: Server,
   s3_specialist: HardDrive,
   dynamodb_specialist: Database,
   critique: Shield,
   correlation: Network,
+  correlate: Network,
+  refine: GitBranch,
+  verify: CheckCircle,
+  evaluate: BarChart3,
+  aggregate: Layers,
+  dispatch: Zap,
 };
 
 const STATUS_ICONS: Record<string, typeof CheckCircle> = {
@@ -145,6 +172,8 @@ const STATUS_COLORS: Record<string, string> = {
   skipped: "text-gray-400",
 };
 
+// ─── Components ───────────────────────────────────────────────────────────
+
 function AgentBadge({ agentId }: { agentId: string }) {
   const Icon = AGENT_ICONS[agentId] || Brain;
   const colorClass = AGENT_COLORS[agentId] || "bg-gray-500/20 text-gray-400 border-gray-500/30";
@@ -156,7 +185,62 @@ function AgentBadge({ agentId }: { agentId: string }) {
   );
 }
 
-// ─── Trace Timeline ────────────────────────────────────────────────────────
+function GraphTopology({
+  nodes,
+  edges,
+}: {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+}) {
+  const agentNodes = nodes.filter((n) => n.type === "agent");
+  if (!agentNodes.length)
+    return <p className="text-sm text-muted-foreground p-4">No graph data</p>;
+
+  return (
+    <div className="p-4 space-y-4">
+      <div className="flex flex-wrap gap-3 justify-center">
+        {agentNodes.map((node) => (
+          <motion.div
+            key={node.id}
+            initial={{ scale: 0 }}
+            animate={{ scale: 1 }}
+            whileHover={{ scale: 1.05 }}
+            className={`px-4 py-2 rounded-lg border ${AGENT_COLORS[node.id] || "bg-gray-500/20 text-gray-400 border-gray-500/30"}`}
+          >
+            <div className="flex items-center gap-2">
+              {(() => {
+                const Icon = AGENT_ICONS[node.id] || Brain;
+                return <Icon className="w-4 h-4" />;
+              })()}
+              <span className="text-sm font-mono">{node.id}</span>
+            </div>
+          </motion.div>
+        ))}
+      </div>
+      <Separator />
+      <div className="space-y-1 max-h-64 overflow-y-auto">
+        {edges.map((edge, i) => (
+          <motion.div
+            key={i}
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: i * 0.03 }}
+            className="flex items-center gap-2 text-xs text-muted-foreground font-mono"
+          >
+            <AgentBadge agentId={edge.source} />
+            <ArrowRight className="w-3 h-3" />
+            <AgentBadge agentId={edge.target} />
+            {edge.conditional && (
+              <Badge variant="secondary" className="text-[10px]">
+                conditional
+              </Badge>
+            )}
+          </motion.div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function TraceTimeline({ spans }: { spans: TraceSpan[] }) {
   if (!spans.length) return <p className="text-sm text-muted-foreground p-4">No trace data yet</p>;
@@ -200,61 +284,6 @@ function TraceTimeline({ spans }: { spans: TraceSpan[] }) {
   );
 }
 
-// ─── Agent Interaction Graph ───────────────────────────────────────────────
-
-function InteractionGraph({
-  graph,
-}: {
-  graph: { nodes: Array<{ id: string }>; edges: Array<{ from: string; to: string; type: string }> };
-}) {
-  if (!graph.nodes.length)
-    return <p className="text-sm text-muted-foreground p-4">No interactions recorded</p>;
-
-  return (
-    <div className="p-4 space-y-3">
-      <div className="flex flex-wrap gap-3 justify-center">
-        {graph.nodes.map((node) => (
-          <motion.div
-            key={node.id}
-            initial={{ scale: 0 }}
-            animate={{ scale: 1 }}
-            className={`px-4 py-2 rounded-lg border ${AGENT_COLORS[node.id] || "bg-gray-500/20 text-gray-400 border-gray-500/30"}`}
-          >
-            <div className="flex items-center gap-2">
-              {(() => {
-                const Icon = AGENT_ICONS[node.id] || Brain;
-                return <Icon className="w-4 h-4" />;
-              })()}
-              <span className="text-sm font-mono">{node.id}</span>
-            </div>
-          </motion.div>
-        ))}
-      </div>
-      <Separator />
-      <div className="space-y-1">
-        {graph.edges.map((edge, i) => (
-          <motion.div
-            key={i}
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: i * 0.1 }}
-            className="flex items-center gap-2 text-xs text-muted-foreground font-mono"
-          >
-            <AgentBadge agentId={edge.from} />
-            <ArrowRight className="w-3 h-3" />
-            <AgentBadge agentId={edge.to} />
-            <Badge variant="secondary" className="text-xs">
-              {edge.type}
-            </Badge>
-          </motion.div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ─── Decision Log ──────────────────────────────────────────────────────────
-
 function DecisionLog({ decisions }: { decisions: Decision[] }) {
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
 
@@ -290,14 +319,6 @@ function DecisionLog({ decisions }: { decisions: Decision[] }) {
             )}
             <AgentBadge agentId={d.agent} />
             <span className="text-sm font-medium flex-1">{d.action}</span>
-            {d.confidence > 0 && (
-              <Badge variant="outline" className="text-xs">
-                {(d.confidence * 100).toFixed(0)}%
-              </Badge>
-            )}
-            {d.duration_ms > 0 && (
-              <span className="text-xs text-muted-foreground">{d.duration_ms.toFixed(0)}ms</span>
-            )}
           </button>
           <AnimatePresence>
             {expanded.has(i) && (
@@ -305,24 +326,10 @@ function DecisionLog({ decisions }: { decisions: Decision[] }) {
                 initial={{ height: 0, opacity: 0 }}
                 animate={{ height: "auto", opacity: 1 }}
                 exit={{ height: 0, opacity: 0 }}
-                className="border-t border-border/30 bg-muted/10 px-4 py-3 text-sm space-y-2"
+                className="border-t border-border/30 bg-muted/10 px-4 py-3 text-sm"
               >
-                <div>
-                  <span className="text-muted-foreground">Reasoning: </span>
-                  <span>{d.reasoning}</span>
-                </div>
-                {Object.keys(d.inputs).length > 0 && (
-                  <div>
-                    <span className="text-muted-foreground">Inputs: </span>
-                    <code className="text-xs bg-muted/30 p-1 rounded">{JSON.stringify(d.inputs)}</code>
-                  </div>
-                )}
-                {Object.keys(d.outputs).length > 0 && (
-                  <div>
-                    <span className="text-muted-foreground">Outputs: </span>
-                    <code className="text-xs bg-muted/30 p-1 rounded">{JSON.stringify(d.outputs)}</code>
-                  </div>
-                )}
+                <span className="text-muted-foreground">Reasoning: </span>
+                <span>{d.reasoning}</span>
               </motion.div>
             )}
           </AnimatePresence>
@@ -331,8 +338,6 @@ function DecisionLog({ decisions }: { decisions: Decision[] }) {
     </div>
   );
 }
-
-// ─── Message Feed ──────────────────────────────────────────────────────────
 
 function MessageFeed({ messages }: { messages: AgentMessage[] }) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -349,7 +354,7 @@ function MessageFeed({ messages }: { messages: AgentMessage[] }) {
       <div className="space-y-2 p-2">
         {messages.map((msg, i) => (
           <motion.div
-            key={msg.id || i}
+            key={i}
             initial={{ opacity: 0, x: -10 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ delay: i * 0.03 }}
@@ -361,17 +366,7 @@ function MessageFeed({ messages }: { messages: AgentMessage[] }) {
               <AgentBadge agentId={msg.to_agent} />
             </div>
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <Badge variant="secondary" className="text-xs">
-                  {msg.message_type}
-                </Badge>
-                <span className="text-xs text-muted-foreground">
-                  {new Date(msg.timestamp).toLocaleTimeString()}
-                </span>
-              </div>
-              <div className="text-xs text-muted-foreground mt-1 font-mono truncate">
-                {JSON.stringify(msg.payload).slice(0, 120)}...
-              </div>
+              <p className="text-sm">{msg.content}</p>
             </div>
           </motion.div>
         ))}
@@ -380,13 +375,11 @@ function MessageFeed({ messages }: { messages: AgentMessage[] }) {
   );
 }
 
-// ─── Verification Gates Panel ──────────────────────────────────────────────
-
 function VerificationPanel({
   gates,
   summary,
 }: {
-  gates: SessionInfo["verification_gates"];
+  gates: VerificationGate[];
   summary: AnalysisResult["verification_summary"];
 }) {
   return (
@@ -432,7 +425,41 @@ function VerificationPanel({
   );
 }
 
-// ─── Evaluation Metrics ────────────────────────────────────────────────────
+function CorrelationsPanel({ correlations }: { correlations: Correlation[] }) {
+  if (!correlations.length)
+    return <p className="text-sm text-muted-foreground p-4">No cross-resource correlations found</p>;
+
+  return (
+    <div className="space-y-3 p-2">
+      {correlations.map((c, i) => (
+        <motion.div
+          key={i}
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: i * 0.1 }}
+        >
+          <Card className="border-cyan-500/30">
+            <CardContent className="p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <h4 className="text-sm font-medium">{c.title}</h4>
+                <div className="flex items-center gap-2">
+                  <Badge variant="secondary" className="text-xs">{c.type}</Badge>
+                  <Badge variant="outline" className="text-xs">{(c.confidence * 100).toFixed(0)}%</Badge>
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">{c.description}</p>
+              {c.combined_savings != null && c.combined_savings > 0 && (
+                <div className="text-sm font-mono text-green-400">
+                  Combined savings: ${c.combined_savings.toFixed(2)}/mo
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </motion.div>
+      ))}
+    </div>
+  );
+}
 
 function EvaluationPanel({ evaluation }: { evaluation: AnalysisResult["evaluation"] }) {
   if (!evaluation || evaluation.total_metrics === 0)
@@ -449,6 +476,15 @@ function EvaluationPanel({ evaluation }: { evaluation: AnalysisResult["evaluatio
           <Progress value={value * 100} className="h-2" />
         </div>
       ))}
+      {evaluation.benchmark_count > 0 && (
+        <div className="pt-2 border-t border-border/30">
+          <div className="flex justify-between text-sm">
+            <span className="font-mono text-muted-foreground">Benchmark Pass Rate</span>
+            <span className="font-mono">{(evaluation.benchmark_pass_rate * 100).toFixed(1)}%</span>
+          </div>
+          <Progress value={evaluation.benchmark_pass_rate * 100} className="h-2 mt-1" />
+        </div>
+      )}
     </div>
   );
 }
@@ -456,20 +492,23 @@ function EvaluationPanel({ evaluation }: { evaluation: AnalysisResult["evaluatio
 // ─── Main Dashboard ────────────────────────────────────────────────────────
 
 export function AgentDashboard() {
-  const [agents, setAgents] = useState<AgentInfo[]>([]);
+  const [graphTopology, setGraphTopology] = useState<{ nodes: GraphNode[]; edges: GraphEdge[] }>({
+    nodes: [],
+    edges: [],
+  });
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [sessions, setSessions] = useState<Array<Record<string, unknown>>>([]);
   const [liveEvents, setLiveEvents] = useState<Array<Record<string, unknown>>>([]);
   const wsRef = useRef<WebSocket | null>(null);
 
-  const fetchAgents = useCallback(async () => {
+  const fetchGraph = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/agent/agents`);
+      const res = await fetch(`${API_BASE}/agent/graph`);
       const data = await res.json();
-      setAgents(data.agents || []);
+      setGraphTopology({ nodes: data.nodes || [], edges: data.edges || [] });
     } catch {
-      /* agents will populate on first analysis */
+      /* graph will populate on first load */
     }
   }, []);
 
@@ -484,9 +523,9 @@ export function AgentDashboard() {
   }, []);
 
   useEffect(() => {
-    fetchAgents();
+    fetchGraph();
     fetchSessions();
-  }, [fetchAgents, fetchSessions]);
+  }, [fetchGraph, fetchSessions]);
 
   const connectWs = useCallback((sessionId: string) => {
     if (wsRef.current) wsRef.current.close();
@@ -520,7 +559,7 @@ export function AgentDashboard() {
         connectWs(analysisResult.session.session_id);
       }
 
-      fetchAgents();
+      fetchGraph();
       fetchSessions();
     } catch (err) {
       console.error("Analysis failed:", err);
@@ -531,24 +570,27 @@ export function AgentDashboard() {
 
   const loadSession = async (sessionId: string) => {
     try {
-      const [sessionRes, traceRes, messagesRes] = await Promise.all([
-        fetch(`${API_BASE}/agent/session/${sessionId}`),
-        fetch(`${API_BASE}/agent/trace/${sessionId}`),
-        fetch(`${API_BASE}/agent/messages/${sessionId}`),
-      ]);
-      const sessionData = await sessionRes.json();
-      const traceData = await traceRes.json();
-      const messagesData = await messagesRes.json();
+      const res = await fetch(`${API_BASE}/agent/session/${sessionId}`);
+      const data = await res.json();
+      if (data.error) return;
 
       setResult({
-        session: sessionData,
-        recommendations: [],
-        decisions: [],
-        messages: messagesData.messages || [],
-        trace: traceData.spans || [],
-        interaction_graph: messagesData.interaction_graph || { nodes: [], edges: [] },
-        verification_summary: { total_gates: 0, passed: 0, failed: 0, needs_review: 0 },
-        evaluation: { total_metrics: 0, averages: {}, benchmark_pass_rate: 0 },
+        session: {
+          session_id: data.session_id || sessionId,
+          trace_id: data.trace_id || "",
+          status: data.status || "unknown",
+          resource_count: data.resource_count || 0,
+          recommendation_count: data.recommendation_count || 0,
+          message_count: data.message_count || 0,
+          decision_count: data.decision_count || 0,
+        },
+        recommendations: data.recommendations || [],
+        decisions: data.decisions || [],
+        messages: data.messages || [],
+        correlations: data.correlations || [],
+        verification_summary: data.verification_summary || { total_gates: 0, passed: 0, failed: 0, needs_review: 0 },
+        verification_gates: data.verification_gates || [],
+        evaluation: data.evaluation || { total_metrics: 0, averages: {}, benchmark_pass_rate: 0, benchmark_count: 0 },
       });
 
       connectWs(sessionId);
@@ -556,6 +598,8 @@ export function AgentDashboard() {
       console.error("Failed to load session:", err);
     }
   };
+
+  const agentNodeCount = graphTopology.nodes.filter((n) => n.type === "agent").length;
 
   return (
     <div className="space-y-6 p-6">
@@ -567,12 +611,17 @@ export function AgentDashboard() {
             Multi-Agent Intelligence
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Watch AI agents collaborate, critique, and optimize your cloud infrastructure
+            LangGraph-powered agents collaborate to optimize your cloud infrastructure
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <Badge variant="outline" className="text-xs">
-            {agents.length} agents registered
+          <Badge variant="outline" className="text-xs gap-1">
+            <GitBranch className="w-3 h-3" />
+            {agentNodeCount} nodes in graph
+          </Badge>
+          <Badge variant="outline" className="text-xs gap-1">
+            <ExternalLink className="w-3 h-3" />
+            LangSmith
           </Badge>
           <Button onClick={runAnalysis} disabled={loading} className="gap-2">
             {loading ? (
@@ -588,33 +637,6 @@ export function AgentDashboard() {
             )}
           </Button>
         </div>
-      </div>
-
-      {/* Agent Registry */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        {agents.map((agent) => {
-          const Icon = AGENT_ICONS[agent.agent_id] || Brain;
-          const colorClass = AGENT_COLORS[agent.agent_id] || "bg-gray-500/20 text-gray-400 border-gray-500/30";
-          return (
-            <motion.div key={agent.agent_id} whileHover={{ scale: 1.03 }}>
-              <Card className={`border ${colorClass.split(" ").pop()} bg-card/50`}>
-                <CardContent className="p-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Icon className={`w-4 h-4 ${colorClass.split(" ")[1]}`} />
-                    <span className="text-xs font-mono font-medium">{agent.agent_id}</span>
-                  </div>
-                  <div className="flex flex-wrap gap-1">
-                    {agent.capabilities.slice(0, 3).map((cap) => (
-                      <Badge key={cap} variant="secondary" className="text-[10px]">
-                        {cap}
-                      </Badge>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            </motion.div>
-          );
-        })}
       </div>
 
       {/* Session Overview */}
@@ -644,6 +666,11 @@ export function AgentDashboard() {
                   <Badge variant="secondary">{result.session.recommendation_count} recommendations</Badge>
                   <Badge variant="secondary">{result.session.decision_count} decisions</Badge>
                   <Badge variant="secondary">{result.session.message_count} messages</Badge>
+                  {result.session.duration_ms && (
+                    <Badge variant="outline" className="text-xs">
+                      {(result.session.duration_ms / 1000).toFixed(1)}s
+                    </Badge>
+                  )}
                 </div>
               </div>
             </CardHeader>
@@ -652,19 +679,22 @@ export function AgentDashboard() {
       )}
 
       {/* Main Tabs */}
-      <Tabs defaultValue="trace" className="space-y-4">
-        <TabsList className="grid grid-cols-7 w-full">
+      <Tabs defaultValue="graph" className="space-y-4">
+        <TabsList className="grid grid-cols-8 w-full">
+          <TabsTrigger value="graph" className="text-xs gap-1">
+            <GitBranch className="w-3 h-3" /> Graph
+          </TabsTrigger>
           <TabsTrigger value="trace" className="text-xs gap-1">
             <BarChart3 className="w-3 h-3" /> Trace
-          </TabsTrigger>
-          <TabsTrigger value="agents" className="text-xs gap-1">
-            <Network className="w-3 h-3" /> Agents
           </TabsTrigger>
           <TabsTrigger value="decisions" className="text-xs gap-1">
             <Brain className="w-3 h-3" /> Decisions
           </TabsTrigger>
           <TabsTrigger value="messages" className="text-xs gap-1">
             <MessageSquare className="w-3 h-3" /> Messages
+          </TabsTrigger>
+          <TabsTrigger value="correlations" className="text-xs gap-1">
+            <Network className="w-3 h-3" /> Correlations
           </TabsTrigger>
           <TabsTrigger value="gates" className="text-xs gap-1">
             <Shield className="w-3 h-3" /> Gates
@@ -677,26 +707,27 @@ export function AgentDashboard() {
           </TabsTrigger>
         </TabsList>
 
+        <TabsContent value="graph">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm flex items-center gap-2">
+                <GitBranch className="w-4 h-4" />
+                LangGraph Topology
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <GraphTopology nodes={graphTopology.nodes} edges={graphTopology.edges} />
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         <TabsContent value="trace">
           <Card>
             <CardHeader>
               <CardTitle className="text-sm">Execution Timeline</CardTitle>
             </CardHeader>
             <CardContent>
-              <TraceTimeline spans={result?.trace || []} />
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="agents">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm">Agent Interaction Graph</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <InteractionGraph
-                graph={result?.interaction_graph || { nodes: [], edges: [] }}
-              />
+              <TraceTimeline spans={[]} />
             </CardContent>
           </Card>
         </TabsContent>
@@ -723,6 +754,17 @@ export function AgentDashboard() {
           </Card>
         </TabsContent>
 
+        <TabsContent value="correlations">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm">Cross-Resource Correlations</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <CorrelationsPanel correlations={result?.correlations || []} />
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         <TabsContent value="gates">
           <Card>
             <CardHeader>
@@ -730,7 +772,7 @@ export function AgentDashboard() {
             </CardHeader>
             <CardContent>
               <VerificationPanel
-                gates={result?.session?.verification_gates || []}
+                gates={result?.verification_gates || []}
                 summary={
                   result?.verification_summary || {
                     total_gates: 0,
@@ -756,6 +798,7 @@ export function AgentDashboard() {
                     total_metrics: 0,
                     averages: {},
                     benchmark_pass_rate: 0,
+                    benchmark_count: 0,
                   }
                 }
               />
