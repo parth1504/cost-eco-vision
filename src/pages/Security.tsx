@@ -321,7 +321,7 @@ export function Security() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div className="space-y-1">
-                <p className="text-sm text-muted-foreground">Critical Issues</p>
+                <p className="text-sm text-muted-foreground">Issues</p>
                 <p className="text-2xl font-bold text-critical">{criticalFindings}</p>
               </div>
               <AlertTriangle className="h-8 w-8 text-critical" />
@@ -563,7 +563,7 @@ export function Security() {
         {/* Compliance & Insights */}
         <motion.div variants={itemVariants} className="space-y-6">
           {/* Compliance Status — backed by AWS Security Hub */}
-          <Card className="dashboard-card">
+          {/* <Card className="dashboard-card">
             <CardHeader>
               <CardTitle className="flex items-center space-x-2">
                 <FileText className="h-5 w-5" />
@@ -611,7 +611,7 @@ export function Security() {
                 ))
               )}
             </CardContent>
-          </Card>
+          </Card> */}
 
           {/* Security Trends */}
           <Card className="dashboard-card">

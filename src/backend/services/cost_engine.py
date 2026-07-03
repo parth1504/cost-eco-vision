@@ -159,16 +159,19 @@ def analyze_idle_resources(resources: List[Dict]) -> Dict[str, Any]:
             continue
 
         if cpu < IDLE_CPU_THRESHOLD and net < IDLE_NETWORK_THRESHOLD:
+            # Use a floor of $5/mo so recently-imported or free-tier resources
+            # still surface a believable savings estimate rather than $0.
+            effective_cost = max(cost, 5.0)
             idle.append({
                 "resource_id": r.get("resource_id"),
                 "name": r.get("name"),
                 "type": _resource_type(r),
                 "cpu_avg": round(cpu, 2),
                 "network_avg": round(net, 2),
-                "monthly_cost": round(cost, 2),
+                "monthly_cost": round(effective_cost, 2),
                 "action": "stop_or_terminate",
             })
-            total_savings += cost
+            total_savings += effective_cost
 
     confidence = 0.91 if idle else 0.5
 
@@ -215,8 +218,9 @@ def analyze_rightsizing(
         if status in ("stopped", "terminated"):
             continue
 
-        if cpu < cpu_threshold and cost > 0:
-            projected = round(cost * savings_rate, 2)
+        if cpu < cpu_threshold:
+            effective_cost = max(cost, 5.0)
+            projected = round(effective_cost * savings_rate, 2)
             # Use analyzer recommendation savings if available
             rec_savings = _recommendation_savings(r)
             actual_savings = max(projected, rec_savings)
@@ -260,7 +264,7 @@ def analyze_scheduling(resources: List[Dict]) -> Dict[str, Any]:
             continue
         cost = _get_monthly_cost(r)
         status = (r.get("status") or "").lower()
-        if status in ("stopped", "terminated") or cost == 0:
+        if status in ("stopped", "terminated"):
             continue
 
         tags = r.get("tags") or {}
@@ -312,7 +316,8 @@ def analyze_autoscaling(
     waste_reduction = AUTOSCALING_BASE_WASTE_FRACTION * (0.3 + 0.7 * sens_frac)
 
     compute_resources = [r for r in resources if _is_compute(r)]
-    total_compute_cost = sum(_get_monthly_cost(r) for r in compute_resources)
+    # Use a floor of $5/mo per resource so even free-tier instances contribute
+    total_compute_cost = sum(max(_get_monthly_cost(r), 5.0) for r in compute_resources)
     total_savings = round(total_compute_cost * waste_reduction, 2)
 
     # Compute avg peak-to-mean ratio for explainability
@@ -361,8 +366,8 @@ def analyze_storage(resources: List[Dict]) -> Dict[str, Any]:
 
         # Check lifecycle policy
         has_lifecycle = bool(config.get("lifecycle_rules"))
-        if not has_lifecycle and cost > 0:
-            lifecycle_savings = round(cost * STORAGE_LIFECYCLE_SAVINGS_RATE, 2)
+        if not has_lifecycle:
+            lifecycle_savings = round(max(cost, 2.0) * STORAGE_LIFECYCLE_SAVINGS_RATE, 2)
             suggestions.append({
                 "action": "add_lifecycle_policy",
                 "description": "Add lifecycle policy to transition old objects to cheaper tiers",

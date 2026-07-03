@@ -1,14 +1,30 @@
+# --- Core ---
 fastapi==0.109.0
 uvicorn==0.27.0
 python-dotenv==1.0.1
 pydantic>=2.0.0
+
+# --- AWS ---
 boto3>=1.34.0
 botocore>=1.34.0
-boto3
-dotenv
+
+# --- LLM Providers ---
+google-generativeai
+openai>=1.0.0
+
+# --- LangGraph Multi-Agent Framework ---
+langgraph>=0.2.0
+langchain-core>=0.3.0
+langsmith>=0.1.0
+langgraph-checkpoint>=2.0.0
+
+# --- Observability ---
+opentelemetry-api>=1.20.0
+opentelemetry-sdk>=1.20.0
+opentelemetry-exporter-otlp>=1.20.0
+
+# --- Utilities ---
+websockets>=12.0
 PyGithub==1.58
 reportlab==4.0.0
-boto3==1.43.2
-google-generativeai
-# Bedrock Converse API is used via boto3 — no extra deps needed.
-# (anthropic SDK no longer required since we moved to provider-agnostic Converse.)
+chromadb>=0.4.0

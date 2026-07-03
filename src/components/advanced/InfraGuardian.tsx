@@ -179,8 +179,8 @@ export function InfraGuardian() {
   <div className="flex items-center justify-between">
     <div>
       <CardTitle className="flex items-center space-x-2">
-        <GitBranch className="h-5 w-5 text-warning" />
-        <span>Infrastructure Drift Detection</span>
+        {/* <GitBranch className="h-5 w-5 text-warning" /> */}
+        {/* <span>Infrastructure Drift Detection</span> */}
       </CardTitle>
       <CardDescription>
         Resources that have drifted from their defined Infrastructure as Code
@@ -217,9 +217,9 @@ export function InfraGuardian() {
     </div>
   </div>
 </CardHeader>
-            <CardDescription>
+            {/* <CardDescription>
               Resources that have drifted from their defined Infrastructure as Code
-            </CardDescription>
+            </CardDescription> */}
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-3 gap-4 mb-6">
