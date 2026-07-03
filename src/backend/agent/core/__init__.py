@@ -11,5 +11,5 @@ Architecture:
   - memory.py      : Three-tier memory (working / short-term / long-term)
   - evaluation.py  : Quality metrics and benchmarking
   - observability.py: LangSmith + OpenTelemetry integration
-  - session.py     : Session lifecycle and handoff
+  - types.py       : Shared enums and dataclasses (VerificationGate, VerificationResult)
 """

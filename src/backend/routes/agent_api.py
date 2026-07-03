@@ -3,14 +3,8 @@ REST + WebSocket API for the LangGraph multi-agent system.
 
 Endpoints:
   - POST /agent/analyze           — Run multi-agent analysis via LangGraph
-  - POST /agent/analyze/stream    — Stream node-by-node results via SSE
-  - GET  /agent/session/{id}      — Get session state (from LangGraph checkpointer)
+  - GET  /agent/session/{id}      — Get session state
   - GET  /agent/sessions          — List recent sessions
-  - POST /agent/session/{id}/handoff — Create handoff token
-  - POST /agent/resume/{handoff_id}  — Resume from handoff
-  - GET  /agent/trace/{id}        — Get trace data
-  - GET  /agent/evaluation        — Get evaluation metrics
-  - GET  /agent/memory/stats      — Memory system stats
   - GET  /agent/graph             — Get graph topology for visualization
   - WS   /agent/ws/{session}      — Real-time event stream
 """
@@ -23,7 +17,6 @@ import logging
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -37,11 +30,6 @@ class AnalyzeRequest(BaseModel):
     session_id: str | None = None
 
 
-class HandoffResponse(BaseModel):
-    handoff_id: str
-    from_session: str
-
-
 # ─── REST Endpoints ─────────────────────────────────────────────────────────
 
 @router.post("/analyze")
@@ -52,21 +40,6 @@ async def analyze_resources(request: AnalyzeRequest):
     orchestrator = MultiAgentOrchestrator()
     result = orchestrator.run(request.resources, session_id=request.session_id)
     return result
-
-
-@router.post("/analyze/stream")
-async def analyze_stream(request: AnalyzeRequest):
-    """Stream analysis results node-by-node via Server-Sent Events."""
-    from agent.core.orchestrator import MultiAgentOrchestrator
-
-    orchestrator = MultiAgentOrchestrator()
-
-    async def event_generator():
-        for snapshot in orchestrator.stream(request.resources, session_id=request.session_id):
-            yield f"data: {json.dumps(snapshot, default=str)}\n\n"
-        yield "data: {\"event\": \"complete\"}\n\n"
-
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @router.get("/session/{session_id}")
@@ -83,63 +56,9 @@ async def get_session(session_id: str):
 
 @router.get("/sessions")
 async def list_sessions(limit: int = 20):
-    """List recent agent sessions."""
-    from agent.core.session import session_manager
-    return {"sessions": session_manager.list_sessions(limit=limit)}
-
-
-@router.post("/session/{session_id}/handoff")
-async def create_handoff(session_id: str):
-    """Create a handoff token for multi-session context transfer."""
-    from agent.core.session import session_manager
-
-    handoff_id = session_manager.handoff_session(session_id)
-    if not handoff_id:
-        return {"error": "Session not found or already completed"}
-    return {"handoff_id": handoff_id, "from_session": session_id}
-
-
-@router.post("/resume/{handoff_id}")
-async def resume_from_handoff(handoff_id: str):
-    """Resume a session from a handoff token."""
-    from agent.core.session import session_manager
-
-    session = session_manager.resume_from_handoff(handoff_id)
-    if not session:
-        return {"error": "Handoff token not found or expired"}
-    return session.to_dict()
-
-
-@router.get("/trace/{trace_id}")
-async def get_trace(trace_id: str):
-    """Get trace data for a session."""
-    from agent.core.observability import trace_collector
-    return {
-        "trace_id": trace_id,
-        "spans": trace_collector.get_trace(trace_id),
-        "summary": trace_collector.get_session_summary(trace_id),
-    }
-
-
-@router.get("/evaluation")
-async def get_evaluation():
-    """Get evaluation metrics and benchmark results."""
-    from agent.core.evaluation import evaluation_engine
-    return {
-        "summary": evaluation_engine.get_summary(),
-        "metrics": evaluation_engine.get_metrics(),
-        "benchmarks": evaluation_engine.get_benchmark_results(),
-    }
-
-
-@router.get("/memory/stats")
-async def get_memory_stats():
-    """Get memory system statistics."""
+    """List recent agent sessions from memory."""
     from agent.core.memory import agent_memory
-    return {
-        "adoption_rate": agent_memory.get_adoption_rate(),
-        "expired_cleaned": agent_memory.cleanup(),
-    }
+    return {"sessions": agent_memory.get_recent_snapshots(limit=limit)}
 
 
 @router.get("/graph")
@@ -232,12 +151,7 @@ ws_manager = ConnectionManager()
 
 @router.websocket("/ws/{session_id}")
 async def websocket_trace(websocket: WebSocket, session_id: str):
-    """
-    WebSocket for real-time agent trace streaming.
-
-    Streams LangGraph node transitions, span events, and metrics
-    to the frontend dashboard as they happen.
-    """
+    """WebSocket for real-time agent trace streaming."""
     await ws_manager.connect(session_id, websocket)
 
     from agent.core.observability import trace_collector
