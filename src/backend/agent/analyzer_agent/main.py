@@ -1,26 +1,31 @@
+"""
+Legacy entry point — kept for backward compatibility.
+
+The unified LangGraph orchestrator (agent.core) now handles all analysis.
+This module is only used by routes that apply fixes on individual resources
+and need a quick single-resource re-analysis outside the full pipeline.
+"""
+
 import logging
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-from agent.ec2_agent.complex_orchestrator import run_complex_agent
-from agent.s3_agent.orchestrator import run_s3_agent
-from agent.dynamodb_agent.orchestrator import run_dynamodb_agent
-
 
 def generateRecommendations(resource):
+    """
+    Single-resource recommendation generation via the LangGraph pipeline.
+
+    Called only for ad-hoc re-analysis (e.g. after applying fixes).
+    The main flow in services/resources.py uses the orchestrator directly.
+    """
+    from agent.core.orchestrator import MultiAgentOrchestrator
+
     logger.info(
         "Generating recommendations for resource: %s (type=%s)",
         resource.get("resource_id"), resource.get("type"),
     )
-    rtype = resource.get("type")
 
-    if rtype == "EC2":
-        return run_complex_agent(resource)
-    elif rtype == "S3":
-        return run_s3_agent(resource)
-    elif rtype == "DynamoDB":
-        return run_dynamodb_agent(resource)
-
-    logger.warning("Unknown resource type: %s", rtype)
-    return []
+    orchestrator = MultiAgentOrchestrator()
+    result = orchestrator.run([resource])
+    return result.get("recommendations", [])

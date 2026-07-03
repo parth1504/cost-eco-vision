@@ -1,9 +1,11 @@
 """
-LangGraph state definition for the multi-agent cloud optimization system.
+LangGraph state definition for the unified multi-agent orchestrator.
 
-The state flows through the graph and accumulates results from each node.
-Annotated fields with operator.add are append-only — each node's return
-value is merged into the existing list rather than replacing it.
+The state flows through the entire pipeline:
+  telemetry → signals → sub-agents → safety → rank →
+  critique → refine → correlate → verify → evaluate
+
+Annotated fields with operator.add are append-only lists.
 """
 
 from __future__ import annotations
@@ -14,28 +16,36 @@ from typing import Any, Annotated, Dict, List, Optional, TypedDict
 
 
 class AgentState(TypedDict, total=False):
-    """Shared state that flows through the LangGraph execution."""
 
     # --- Inputs ---
     session_id: str
     trace_id: str
     resources: List[Dict[str, Any]]
 
-    # --- Accumulated results (append-only via operator.add) ---
-    messages: Annotated[List[Dict[str, Any]], operator.add]
-    decisions: Annotated[List[Dict[str, Any]], operator.add]
-    verification_gates: Annotated[List[Dict[str, Any]], operator.add]
+    # --- Telemetry layer ---
+    telemetry_bundles: Dict[str, Any]
+    signals_map: Dict[str, List[Any]]
 
-    # --- Mutable results (overwritten by each node) ---
+    # --- Sub-agent tracking ---
     findings: Dict[str, List[Dict[str, Any]]]
+    agent_call_counts: Dict[str, int]
+
+    # --- Pipeline stages ---
     all_recommendations: List[Dict[str, Any]]
     critique_results: Dict[str, Any]
     correlations: List[Dict[str, Any]]
     recommendations: List[Dict[str, Any]]
 
-    # --- Routing control ---
+    # --- Routing ---
     next_action: str
+    phase: str
     iteration: int
+
+    # --- Tracing (append-only) ---
+    messages: Annotated[List[Dict[str, Any]], operator.add]
+    decisions: Annotated[List[Dict[str, Any]], operator.add]
+    agent_trace: Annotated[List[Dict[str, Any]], operator.add]
+    verification_gates: Annotated[List[Dict[str, Any]], operator.add]
 
     # --- Status ---
     status: str
@@ -50,16 +60,21 @@ def create_initial_state(
         session_id=session_id or str(uuid.uuid4()),
         trace_id=str(uuid.uuid4()),
         resources=resources,
-        messages=[],
-        decisions=[],
-        verification_gates=[],
+        telemetry_bundles={},
+        signals_map={},
         findings={},
+        agent_call_counts={},
         all_recommendations=[],
         critique_results={},
         correlations=[],
         recommendations=[],
-        next_action="dispatch",
+        next_action="collect_telemetry",
+        phase="init",
         iteration=0,
+        messages=[],
+        decisions=[],
+        agent_trace=[],
+        verification_gates=[],
         status="active",
         error=None,
     )

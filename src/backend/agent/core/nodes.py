@@ -1,179 +1,548 @@
 """
-LangGraph node functions for the multi-agent cloud optimization system.
+LangGraph node functions for the unified multi-agent orchestrator.
 
-Each function is a graph node that receives the current AgentState,
-performs its work, and returns a partial state update. LangGraph merges
-the update into the running state automatically.
+Pipeline nodes (in execution order):
+  1. collect_telemetry  — build TelemetryBundle per resource
+  2. extract_signals    — extract intelligence signals from bundles
+  3. supervisor         — LLM/rule-based router decides next sub-agent
+  4. Sub-agent nodes    — per-service specialist agents
+  5. safety_and_rank    — guardrails + dedup + priority ordering
+  6. critique           — quality review of recommendations
+  7. refine             — apply critique feedback
+  8. correlate          — cross-resource pattern detection
+  9. verify             — verification gates
+ 10. evaluate           — quality metrics + session persistence
 
-Nodes:
-  - supervisor        : Decides which node to route to next
-  - ec2_specialist    : Runs EC2 analysis via existing complex_orchestrator
-  - s3_specialist     : Runs S3 analysis via existing s3_agent
-  - dynamodb_specialist : Runs DynamoDB analysis via existing dynamodb_agent
-  - aggregate         : Merges specialist findings into flat recommendation list
-  - critique          : Reviews recommendations for quality issues
-  - refine            : Applies critique feedback
-  - correlate         : Cross-resource pattern detection
-  - verify            : Verification gates
-  - evaluate          : Quality metrics
+Sub-agent nodes (each wraps existing agent functions):
+  EC2:      ec2_metric, ec2_cost, ec2_reliability, ec2_security, ec2_root_cause
+  S3:       s3_storage, s3_cost, s3_reliability, s3_security, s3_access, s3_root_cause
+  DynamoDB: dynamodb_capacity, dynamodb_performance, dynamodb_reliability, dynamodb_root_cause
 """
 
 from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple, Optional
 
 from agent.core.state import AgentState
 from agent.core.guardrails import run_all_gates, verify_conversation_depth
-from agent.core.context import build_correlation_context
 from agent.core.evaluation import evaluation_engine
 from agent.core.memory import agent_memory
 
 logger = logging.getLogger(__name__)
 
 MAX_REFINEMENT_ITERATIONS = 2
+MAX_CALLS_PER_AGENT = 2
+
+# Signal-domain mapping for rule-based routing (from complex_orchestrator)
+_EC2_COST_SIGNALS = {
+    "instance_idle_high_cost", "cpu_sustained_low",
+    "graviton_migration_candidate", "spot_candidate", "cpu_bursty",
+}
+_EC2_RELIABILITY_SIGNALS = {
+    "status_check_failures", "reboot_loop_detected",
+    "no_autoscaling", "single_az_deployment",
+}
+_EC2_SECURITY_SIGNALS = {
+    "imdsv1_in_use", "ebs_unencrypted",
+    "ssh_rdp_open_to_world", "ami_outdated",
+}
+_EC2_METRIC_SIGNALS = {
+    "cpu_sustained_high", "memory_pressure_detected",
+    "swap_exhaustion", "oom_killed", "ebs_burst_balance_low",
+    "network_saturation_detected",
+}
 
 
 # ---------------------------------------------------------------------------
-# Supervisor — decides the next node
+# Collect Telemetry
+# ---------------------------------------------------------------------------
+
+def collect_telemetry(state: AgentState) -> dict:
+    resources = state.get("resources", [])
+    bundles: Dict[str, Any] = {}
+
+    for resource in resources:
+        if resource.get("recommendations"):
+            continue
+        rid = resource.get("resource_id", "")
+        rtype = resource.get("type")
+        try:
+            if rtype == "EC2":
+                from agent.ec2_agent.telemetry import collect_from_resource, normalize
+                bundles[rid] = normalize(collect_from_resource(resource))
+            elif rtype == "S3":
+                from agent.s3_agent.telemetry import (
+                    collect_from_resource as s3_collect,
+                    normalize as s3_normalize,
+                )
+                bundles[rid] = s3_normalize(s3_collect(resource))
+            elif rtype == "DynamoDB":
+                from agent.dynamodb_agent.telemetry import (
+                    collect_from_resource as ddb_collect,
+                    normalize as ddb_normalize,
+                )
+                bundles[rid] = ddb_normalize(ddb_collect(resource))
+        except Exception as e:
+            logger.error("Telemetry collection failed for %s: %s", rid, e)
+
+    logger.info("Collected telemetry for %d resources", len(bundles))
+    return {
+        "telemetry_bundles": bundles,
+        "messages": [_message("telemetry", "supervisor",
+                              f"Collected telemetry for {len(bundles)} resources")],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Extract Signals
+# ---------------------------------------------------------------------------
+
+def extract_signals(state: AgentState) -> dict:
+    bundles = state.get("telemetry_bundles", {})
+    resources = state.get("resources", [])
+    signals_map: Dict[str, List[Any]] = {}
+    resource_types = {r.get("resource_id"): r.get("type") for r in resources}
+
+    for rid, bundle in bundles.items():
+        rtype = resource_types.get(rid)
+        try:
+            if rtype == "EC2":
+                from agent.ec2_agent.signals import extract_signals as ec2_extract
+                signals_map[rid] = ec2_extract(bundle)
+            elif rtype == "S3":
+                from agent.s3_agent.signals import extract_signals as s3_extract
+                signals_map[rid] = s3_extract(bundle)
+            elif rtype == "DynamoDB":
+                from agent.dynamodb_agent.signals import extract_signals as ddb_extract
+                signals_map[rid] = ddb_extract(bundle)
+        except Exception as e:
+            logger.error("Signal extraction failed for %s: %s", rid, e)
+
+    total_signals = sum(len(s) for s in signals_map.values())
+    logger.info("Extracted %d signals across %d resources", total_signals, len(signals_map))
+    return {
+        "signals_map": signals_map,
+        "messages": [_message("signals", "supervisor",
+                              f"Extracted {total_signals} signals from {len(signals_map)} resources")],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Supervisor — LLM/rule-based dynamic router
 # ---------------------------------------------------------------------------
 
 def supervisor(state: AgentState) -> dict:
-    """Examine state and decide which node to invoke next."""
+    phase = state.get("phase", "init")
     findings = state.get("findings", {})
     has_findings = any(bool(v) for v in findings.values())
+    agent_counts = state.get("agent_call_counts", {})
     has_critique = bool(state.get("critique_results", {}).get("reviewed"))
     critique_issues = state.get("critique_results", {}).get("critique", [])
-    has_correlations = "correlations" in state and state["correlations"] is not None
+    has_correlations = "correlations" in state and state["correlations"] is not None and len(state.get("correlations", [])) > 0
     has_verified = bool(state.get("recommendations"))
     iteration = state.get("iteration", 0)
     resources = state.get("resources", [])
+    signals_map = state.get("signals_map", {})
 
-    if not has_findings:
+    # Phase: collect telemetry
+    if not state.get("telemetry_bundles"):
         return {
-            "next_action": "dispatch",
-            "decisions": [_decision("supervisor", "dispatch_specialists",
-                                    f"Starting analysis of {len(resources)} resources")],
+            "next_action": "collect_telemetry",
+            "phase": "telemetry",
+            "decisions": [_decision("supervisor", "start_telemetry",
+                                    f"Starting telemetry collection for {len(resources)} resources")],
         }
 
-    if not has_critique:
+    # Phase: extract signals
+    if not state.get("signals_map"):
+        return {
+            "next_action": "extract_signals",
+            "phase": "signals",
+            "decisions": [_decision("supervisor", "start_signals",
+                                    "Telemetry ready — extracting intelligence signals")],
+        }
+
+    # Phase: run sub-agents
+    next_agent = _route_next_sub_agent(state)
+    if next_agent:
+        return {
+            "next_action": next_agent[0],
+            "phase": "sub_agents",
+            "decisions": [_decision("supervisor", "route_sub_agent",
+                                    next_agent[1])],
+        }
+
+    # Phase: safety + rank (if sub-agents produced findings but not yet ranked)
+    if has_findings and not state.get("all_recommendations"):
+        return {
+            "next_action": "safety_and_rank",
+            "phase": "safety",
+            "decisions": [_decision("supervisor", "run_safety",
+                                    "Sub-agents complete — running safety filter and ranking")],
+        }
+
+    # Phase: critique
+    if state.get("all_recommendations") and not has_critique:
         return {
             "next_action": "critique",
+            "phase": "critique",
             "decisions": [_decision("supervisor", "request_critique",
-                                    "Findings ready — requesting quality review")],
+                                    "Recommendations ready — requesting quality review")],
         }
 
+    # Phase: refine (if critique found issues)
     if critique_issues and iteration < MAX_REFINEMENT_ITERATIONS:
         return {
             "next_action": "refine",
+            "phase": "refine",
             "iteration": iteration + 1,
             "decisions": [_decision("supervisor", "request_refinement",
                                     f"Critique found {len(critique_issues)} issues — refining (iteration {iteration + 1})")],
         }
 
+    # Phase: correlate (multi-resource)
     if not has_correlations and len(resources) > 1:
         return {
             "next_action": "correlate",
+            "phase": "correlate",
             "decisions": [_decision("supervisor", "request_correlation",
                                     f"Checking cross-resource patterns across {len(resources)} resources")],
         }
 
+    # Phase: verify
     if not has_verified:
         return {
             "next_action": "verify",
+            "phase": "verify",
             "decisions": [_decision("supervisor", "run_verification",
                                     "Running verification gates on recommendations")],
         }
 
+    # Phase: evaluate → done
     return {
         "next_action": "evaluate",
+        "phase": "evaluate",
         "decisions": [_decision("supervisor", "run_evaluation",
                                 "Final evaluation and quality metrics")],
     }
 
 
+def _route_next_sub_agent(state: AgentState) -> Optional[Tuple[str, str]]:
+    """Pick the next sub-agent to invoke based on signals and call counts."""
+    signals_map = state.get("signals_map", {})
+    resources = state.get("resources", [])
+    agent_counts = state.get("agent_call_counts", {})
+
+    resource_types = {r.get("resource_id"): r.get("type") for r in resources}
+
+    # Collect all signal names by service type
+    ec2_signals: set = set()
+    s3_signals: set = set()
+    ddb_signals: set = set()
+    for rid, signals in signals_map.items():
+        rtype = resource_types.get(rid)
+        sig_names = {s.name for s in signals}
+        if rtype == "EC2":
+            ec2_signals |= sig_names
+        elif rtype == "S3":
+            s3_signals |= sig_names
+        elif rtype == "DynamoDB":
+            ddb_signals |= sig_names
+
+    candidates: List[Tuple[str, str, int]] = []
+
+    # EC2 sub-agents (dynamic routing based on signal domains)
+    if ec2_signals:
+        ec2_candidates = _ec2_routing_candidates(ec2_signals, agent_counts, state)
+        candidates.extend(ec2_candidates)
+
+    # S3 sub-agents (run all that haven't been called yet)
+    if s3_signals:
+        s3_agents = [
+            ("s3_storage", "S3 storage utilization analysis"),
+            ("s3_cost", "S3 cost optimization analysis"),
+            ("s3_reliability", "S3 reliability analysis"),
+            ("s3_security", "S3 security analysis"),
+            ("s3_access", "S3 access pattern analysis"),
+            ("s3_root_cause", "S3 workload intelligence analysis"),
+        ]
+        for name, desc in s3_agents:
+            if agent_counts.get(name, 0) < MAX_CALLS_PER_AGENT:
+                candidates.append((name, desc, 1))
+
+    # DynamoDB sub-agents
+    if ddb_signals:
+        ddb_agents = [
+            ("dynamodb_capacity", "DynamoDB capacity optimization analysis"),
+            ("dynamodb_performance", "DynamoDB performance analysis"),
+            ("dynamodb_reliability", "DynamoDB reliability analysis"),
+            ("dynamodb_root_cause", "DynamoDB workload intelligence analysis"),
+        ]
+        for name, desc in ddb_agents:
+            if agent_counts.get(name, 0) < MAX_CALLS_PER_AGENT:
+                candidates.append((name, desc, 1))
+
+    if not candidates:
+        return None
+
+    # Priority sort: higher priority first
+    candidates.sort(key=lambda c: c[2], reverse=True)
+    return (candidates[0][0], candidates[0][1])
+
+
+def _ec2_routing_candidates(
+    signal_names: set,
+    agent_counts: Dict[str, int],
+    state: AgentState,
+) -> List[Tuple[str, str, int]]:
+    """EC2 dynamic routing based on signal domains (from complex_orchestrator)."""
+    candidates = []
+    findings = state.get("findings", {})
+
+    # Always start with metrics
+    if agent_counts.get("ec2_metric", 0) < MAX_CALLS_PER_AGENT:
+        candidates.append(("ec2_metric", "Baseline metric analysis for EC2 resources", 10))
+
+    if signal_names & _EC2_COST_SIGNALS and agent_counts.get("ec2_cost", 0) < MAX_CALLS_PER_AGENT:
+        candidates.append(("ec2_cost",
+                           f"Cost signals detected: {signal_names & _EC2_COST_SIGNALS}", 8))
+
+    if signal_names & _EC2_RELIABILITY_SIGNALS and agent_counts.get("ec2_reliability", 0) < MAX_CALLS_PER_AGENT:
+        candidates.append(("ec2_reliability",
+                           f"Reliability signals detected: {signal_names & _EC2_RELIABILITY_SIGNALS}", 7))
+
+    if signal_names & _EC2_SECURITY_SIGNALS and agent_counts.get("ec2_security", 0) < MAX_CALLS_PER_AGENT:
+        candidates.append(("ec2_security",
+                           f"Security signals detected: {signal_names & _EC2_SECURITY_SIGNALS}", 6))
+
+    # Root cause only when enough evidence
+    has_ec2_findings = any(bool(v) for k, v in findings.items() if k.startswith("ec2_"))
+    total_ec2_signals = len(signal_names)
+    if (total_ec2_signals >= 2 and has_ec2_findings
+            and agent_counts.get("ec2_root_cause", 0) < MAX_CALLS_PER_AGENT):
+        candidates.append(("ec2_root_cause",
+                           "Sufficient signals and findings for causal correlation", 3))
+
+    return candidates
+
+
 # ---------------------------------------------------------------------------
-# Specialist agents — wrap existing per-service orchestrators
+# Sub-agent nodes — factory-generated wrappers
 # ---------------------------------------------------------------------------
 
-def ec2_specialist(state: AgentState) -> dict:
-    """Run EC2 analysis via the central analyzer entry point."""
-    return _run_specialist(state, "EC2", "ec2_specialist")
+def _run_sub_agent_node(
+    state: AgentState,
+    agent_name: str,
+    service_type: str,
+    agent_fn_path: str,
+    agent_fn_name: str,
+) -> dict:
+    """Generic wrapper for any sub-agent node."""
+    import importlib
+    bundles = state.get("telemetry_bundles", {})
+    signals_map = state.get("signals_map", {})
+    resources = [
+        r for r in state.get("resources", [])
+        if r.get("type") == service_type and not r.get("recommendations")
+    ]
+
+    module = importlib.import_module(agent_fn_path)
+    agent_fn = getattr(module, agent_fn_name)
+
+    recs: List[Dict[str, Any]] = []
+    for resource in resources:
+        rid = resource.get("resource_id", "")
+        bundle = bundles.get(rid)
+        signals = signals_map.get(rid, [])
+        if not bundle:
+            continue
+
+        start = time.time()
+        try:
+            result = agent_fn(bundle, signals)
+            for rec in result:
+                rec_dict = _to_dict(rec, service_type, rid)
+                recs.append(rec_dict)
+        except Exception as e:
+            logger.error("%s failed for %s: %s", agent_name, rid, e)
+        elapsed = (time.time() - start) * 1000
+        logger.info("%s processed %s in %.0fms — %d recs",
+                    agent_name, rid, elapsed, len(recs))
+
+    findings = dict(state.get("findings", {}))
+    existing = findings.get(agent_name, [])
+    findings[agent_name] = existing + recs
+
+    counts = dict(state.get("agent_call_counts", {}))
+    counts[agent_name] = counts.get(agent_name, 0) + 1
+
+    return {
+        "findings": findings,
+        "agent_call_counts": counts,
+        "agent_trace": [_trace_step(agent_name, len(recs), state)],
+        "messages": [_message(agent_name, "supervisor",
+                              f"Analyzed {len(resources)} {service_type} resources — {len(recs)} recommendations")],
+    }
 
 
-def s3_specialist(state: AgentState) -> dict:
-    """Run S3 analysis via the central analyzer entry point."""
-    return _run_specialist(state, "S3", "s3_specialist")
+def _to_dict(rec: Any, service_type: str, resource_id: str) -> Dict[str, Any]:
+    """Convert a Recommendation dataclass or dict to a legacy dict."""
+    if isinstance(rec, dict):
+        rec.setdefault("resource_id", resource_id)
+        return rec
+
+    # Import service-specific report module
+    if service_type == "EC2":
+        from agent.ec2_agent.report import to_legacy_dict
+    elif service_type == "S3":
+        from agent.s3_agent.report import to_legacy_dict
+    elif service_type == "DynamoDB":
+        from agent.dynamodb_agent.report import to_legacy_dict
+    else:
+        return {"resource_id": resource_id}
+
+    d = to_legacy_dict(rec)
+    d["resource_id"] = resource_id
+    return d
 
 
-def dynamodb_specialist(state: AgentState) -> dict:
-    """Run DynamoDB analysis via the central analyzer entry point."""
-    return _run_specialist(state, "DynamoDB", "dynamodb_specialist")
+# --- EC2 sub-agent nodes ---
+
+def ec2_metric(state: AgentState) -> dict:
+    return _run_sub_agent_node(state, "ec2_metric", "EC2",
+                               "agent.ec2_agent.agents", "metric_analyzer_agent")
+
+def ec2_cost(state: AgentState) -> dict:
+    return _run_sub_agent_node(state, "ec2_cost", "EC2",
+                               "agent.ec2_agent.agents", "cost_optimization_agent")
+
+def ec2_reliability(state: AgentState) -> dict:
+    return _run_sub_agent_node(state, "ec2_reliability", "EC2",
+                               "agent.ec2_agent.agents", "reliability_agent")
+
+def ec2_security(state: AgentState) -> dict:
+    return _run_sub_agent_node(state, "ec2_security", "EC2",
+                               "agent.ec2_agent.agents", "security_agent")
+
+def ec2_root_cause(state: AgentState) -> dict:
+    return _run_sub_agent_node(state, "ec2_root_cause", "EC2",
+                               "agent.ec2_agent.agents", "root_cause_agent")
+
+# --- S3 sub-agent nodes ---
+
+def s3_storage(state: AgentState) -> dict:
+    return _run_sub_agent_node(state, "s3_storage", "S3",
+                               "agent.s3_agent.agents", "storage_utilization_agent")
+
+def s3_cost(state: AgentState) -> dict:
+    return _run_sub_agent_node(state, "s3_cost", "S3",
+                               "agent.s3_agent.agents", "cost_optimization_agent")
+
+def s3_reliability(state: AgentState) -> dict:
+    return _run_sub_agent_node(state, "s3_reliability", "S3",
+                               "agent.s3_agent.agents", "reliability_agent")
+
+def s3_security(state: AgentState) -> dict:
+    return _run_sub_agent_node(state, "s3_security", "S3",
+                               "agent.s3_agent.agents", "security_agent")
+
+def s3_access(state: AgentState) -> dict:
+    return _run_sub_agent_node(state, "s3_access", "S3",
+                               "agent.s3_agent.agents", "access_pattern_agent")
+
+def s3_root_cause(state: AgentState) -> dict:
+    return _run_sub_agent_node(state, "s3_root_cause", "S3",
+                               "agent.s3_agent.agents", "root_cause_agent")
+
+# --- DynamoDB sub-agent nodes ---
+
+def dynamodb_capacity(state: AgentState) -> dict:
+    return _run_sub_agent_node(state, "dynamodb_capacity", "DynamoDB",
+                               "agent.dynamodb_agent.agents", "capacity_optimization_agent")
+
+def dynamodb_performance(state: AgentState) -> dict:
+    return _run_sub_agent_node(state, "dynamodb_performance", "DynamoDB",
+                               "agent.dynamodb_agent.agents", "performance_scalability_agent")
+
+def dynamodb_reliability(state: AgentState) -> dict:
+    return _run_sub_agent_node(state, "dynamodb_reliability", "DynamoDB",
+                               "agent.dynamodb_agent.agents", "reliability_agent")
+
+def dynamodb_root_cause(state: AgentState) -> dict:
+    return _run_sub_agent_node(state, "dynamodb_root_cause", "DynamoDB",
+                               "agent.dynamodb_agent.agents", "root_cause_agent")
 
 
-def _run_specialist(state: AgentState, resource_type: str, agent_name: str) -> dict:
-    """
-    Collect recommendations for a resource type. Uses pre-existing
-    recommendations on the resource if available (from the AWS fetch layer),
-    otherwise generates fresh ones via generateRecommendations().
-    """
-    from agent.analyzer_agent.main import generateRecommendations
+# ---------------------------------------------------------------------------
+# Safety + Rank
+# ---------------------------------------------------------------------------
 
-    resources = [r for r in state.get("resources", []) if r.get("type") == resource_type]
-    recs = []
+def safety_and_rank(state: AgentState) -> dict:
+    """Apply per-service safety filters, memory dedup, and ranking."""
+    findings = state.get("findings", {})
+    resources = state.get("resources", [])
+    all_recs: List[Dict[str, Any]] = []
+
+    # Collect all findings from sub-agents
+    for agent_name, recs in findings.items():
+        all_recs.extend(recs)
+
+    # Also include existing recommendations from cached resources
     for resource in resources:
         existing = resource.get("recommendations")
         if existing:
             for rec in existing:
                 rec.setdefault("resource_id", resource.get("resource_id", ""))
-            recs.extend(existing)
-        else:
-            start = time.time()
-            try:
-                result = generateRecommendations(resource)
-                for rec in result:
-                    rec.setdefault("resource_id", resource.get("resource_id", ""))
-                recs.extend(result)
-            except Exception as e:
-                logger.error("%s failed for %s: %s", agent_name, resource.get("resource_id"), e)
-            elapsed = (time.time() - start) * 1000
-            logger.info("%s processed %s in %.0fms — %d recs",
-                        agent_name, resource.get("resource_id"), elapsed, len(recs))
+            all_recs.extend(existing)
 
-    findings = dict(state.get("findings", {}))
-    findings[agent_name] = recs
+    initial_count = len(all_recs)
+
+    # Apply per-service safety validation on typed recs
+    # (Only for fresh recs that are Recommendation objects — dict recs from
+    # root_cause agents and cached resources skip typed safety)
+    safe_recs = _apply_safety_filters(all_recs, resources)
+
+    logger.info("Safety filter: %d → %d recommendations", initial_count, len(safe_recs))
+
     return {
-        "findings": findings,
-        "messages": [_message(agent_name, "supervisor",
-                              f"Analyzed {len(resources)} {resource_type} resources — {len(recs)} recommendations")],
+        "all_recommendations": safe_recs,
+        "messages": [_message("safety_rank", "supervisor",
+                              f"Safety filtered {initial_count} → {len(safe_recs)} recommendations")],
     }
 
 
+def _apply_safety_filters(
+    recs: List[Dict[str, Any]],
+    resources: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Apply confidence floor and basic safety checks to dict-shaped recs."""
+    MIN_CONFIDENCE = 0.4
+    filtered = []
+    seen_rules: Dict[str, Dict[str, Any]] = {}
+
+    for rec in recs:
+        if not rec.get("evidence") and not rec.get("supporting_signals"):
+            continue
+        if rec.get("confidence", 0) < MIN_CONFIDENCE:
+            continue
+
+        # Dedup: keep highest-confidence per (resource_id, rule_id)
+        key = f"{rec.get('resource_id', '')}:{rec.get('rule_id', rec.get('title', ''))}"
+        existing = seen_rules.get(key)
+        if existing and existing.get("confidence", 0) >= rec.get("confidence", 0):
+            continue
+        seen_rules[key] = rec
+
+    return list(seen_rules.values())
+
+
 # ---------------------------------------------------------------------------
-# Aggregate — merge findings into flat list
-# ---------------------------------------------------------------------------
-
-def aggregate(state: AgentState) -> dict:
-    """Flatten all specialist findings into a single recommendation list."""
-    findings = state.get("findings", {})
-    all_recs = []
-    for agent_id, recs in findings.items():
-        all_recs.extend(recs)
-
-    return {
-        "all_recommendations": all_recs,
-        "messages": [_message("aggregator", "supervisor",
-                              f"Aggregated {len(all_recs)} recommendations from {len(findings)} specialists")],
-    }
-
-
-# ---------------------------------------------------------------------------
-# Critique — quality review
+# Critique
 # ---------------------------------------------------------------------------
 
 def critique(state: AgentState) -> dict:
-    """Review all recommendations for quality issues."""
     recommendations = state.get("all_recommendations", [])
     if not recommendations:
         return {
@@ -223,11 +592,10 @@ def critique(state: AgentState) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Refine — apply critique feedback
+# Refine
 # ---------------------------------------------------------------------------
 
 def refine(state: AgentState) -> dict:
-    """Apply critique feedback to improve recommendations."""
     recommendations = list(state.get("all_recommendations", []))
     critique_data = state.get("critique_results", {})
     critiqued_rules = {c["rule_id"] for c in critique_data.get("critique", [])}
@@ -270,13 +638,11 @@ def refine(state: AgentState) -> dict:
 # ---------------------------------------------------------------------------
 
 def correlate(state: AgentState) -> dict:
-    """Find cross-resource patterns and compound optimization opportunities."""
-    findings = state.get("findings", {})
     resources = state.get("resources", [])
     all_recs = state.get("all_recommendations", [])
-
     correlations = []
 
+    # Compound savings: multiple idle resources
     idle_recs = [r for r in all_recs if "idle" in (r.get("title") or "").lower()]
     if len(idle_recs) >= 2:
         total_savings = sum(
@@ -292,6 +658,7 @@ def correlate(state: AgentState) -> dict:
             "confidence": 0.85,
         })
 
+    # Recurring security gaps
     security_recs = [r for r in all_recs if r.get("type") == "security"]
     title_counts: Dict[str, int] = {}
     for r in security_recs:
@@ -306,6 +673,7 @@ def correlate(state: AgentState) -> dict:
                 "confidence": 0.9,
             })
 
+    # Co-located service resources
     by_service: Dict[str, List[str]] = {}
     for r in resources:
         svc = (r.get("tags") or {}).get("Service", "")
@@ -338,7 +706,6 @@ def correlate(state: AgentState) -> dict:
 # ---------------------------------------------------------------------------
 
 def verify(state: AgentState) -> dict:
-    """Run verification gates on all recommendations."""
     all_recs = state.get("all_recommendations", [])
     messages = state.get("messages", [])
 
@@ -377,11 +744,10 @@ def verify(state: AgentState) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Evaluate — quality metrics
+# Evaluate — quality metrics + session persistence
 # ---------------------------------------------------------------------------
 
 def evaluate(state: AgentState) -> dict:
-    """Run evaluation metrics on verified recommendations."""
     recommendations = state.get("recommendations", [])
     resources = state.get("resources", [])
 
@@ -437,3 +803,36 @@ def _message(from_agent: str, to_agent: str, content: str) -> Dict[str, Any]:
         "content": content,
         "timestamp": time.time(),
     }
+
+
+def _trace_step(agent_name: str, finding_count: int, state: AgentState) -> Dict[str, Any]:
+    signals_map = state.get("signals_map", {})
+    all_signal_names = []
+    for sigs in signals_map.values():
+        all_signal_names.extend(s.name for s in sigs)
+    return {
+        "agent": agent_name,
+        "findings": finding_count,
+        "signals_seen": list(set(all_signal_names)),
+        "timestamp": time.time(),
+    }
+
+
+# All sub-agent node names for graph registration
+SUB_AGENT_NODES = {
+    "ec2_metric": ec2_metric,
+    "ec2_cost": ec2_cost,
+    "ec2_reliability": ec2_reliability,
+    "ec2_security": ec2_security,
+    "ec2_root_cause": ec2_root_cause,
+    "s3_storage": s3_storage,
+    "s3_cost": s3_cost,
+    "s3_reliability": s3_reliability,
+    "s3_security": s3_security,
+    "s3_access": s3_access,
+    "s3_root_cause": s3_root_cause,
+    "dynamodb_capacity": dynamodb_capacity,
+    "dynamodb_performance": dynamodb_performance,
+    "dynamodb_reliability": dynamodb_reliability,
+    "dynamodb_root_cause": dynamodb_root_cause,
+}

@@ -2,7 +2,6 @@ from connections.aws import get_client, get_region
 from connections.db import get_resource_from_db, save_resource_in_db
 from aws.util import  get_resource_cost, should_run_agent
 from datetime import datetime, timedelta
-from agent.analyzer_agent.main import generateRecommendations
 
 
 ec2 = get_client("ec2")
@@ -121,23 +120,15 @@ async def list_ec2_instances(force: bool = False):
                     print(f"EC2 {instance_id} - last agent run: {last_run}, force={force}")
 
                     if should_run_agent(last_run, force=force):
-                        # Build fresh from live AWS data, then preserve any
-                        # human-set / persisted state (is_optimized).
                         instance_data = build_ec2_resource(instance)
                         instance_data["is_optimized"] = db_item.get("is_optimized", False)
-                        recommendations = generateRecommendations(instance_data)
-                        instance_data["recommendations"] = recommendations
-                        instance_data["last_agent_run"] = datetime.utcnow().isoformat()
-                        save_resource_in_db(instance_id, "EC2", instance_data)
+                        instance_data["needs_analysis"] = True
                     else:
-                        # Within cooldown → return cached as-is.
                         instance_data = db_item
                         instance_data["resource_id"] = instance_id
                 else:
                     instance_data = build_ec2_resource(instance)
-                    recommendations = generateRecommendations(instance_data)
-                    instance_data["recommendations"] = recommendations
-                    save_resource_in_db(instance_data["resource_id"], "EC2", instance_data)
+                    instance_data["needs_analysis"] = True
 
                 instances.append(instance_data)
 

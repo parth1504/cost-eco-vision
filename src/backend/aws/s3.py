@@ -1,9 +1,7 @@
 from connections.aws import get_client, get_region
 from connections.db import get_resource_from_db, save_resource_in_db
-from connections.db import get_resource_from_db, save_resource_in_db
 from aws.util import replace_placeholders, get_resource_cost
 from aws.util import should_run_agent
-from agent.analyzer_agent.main import generateRecommendations
 
 from datetime import datetime, timedelta
 aws_region = get_region()
@@ -191,18 +189,13 @@ async def list_s3_buckets(force: bool = False):
                 if should_run_agent(last_run, force=force):
                     bucket_data = build_s3_resource(bucket)
                     bucket_data["is_optimized"] = db_item.get("is_optimized", False)
-                    recommendations = generateRecommendations(bucket_data)
-                    bucket_data["recommendations"] = recommendations
-                    bucket_data["last_agent_run"] = datetime.utcnow().isoformat()
-                    save_resource_in_db(name, "S3", bucket_data)
+                    bucket_data["needs_analysis"] = True
                 else:
                     bucket_data = db_item
                     bucket_data["resource_id"] = name
             else:
                 bucket_data = build_s3_resource(bucket)
-                recommendations = generateRecommendations(bucket_data)
-                bucket_data["recommendations"] = recommendations
-                save_resource_in_db(name, "S3", bucket_data)
+                bucket_data["needs_analysis"] = True
 
             buckets.append(bucket_data)
 

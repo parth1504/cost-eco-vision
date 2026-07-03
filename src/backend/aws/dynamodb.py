@@ -1,11 +1,7 @@
-from os import name
-
-from agent.analyzer_agent.main import generateRecommendations
 from connections.db import get_resource_from_db, save_resource_in_db
 from datetime import datetime, timedelta
 from aws.util import replace_placeholders, get_resource_cost, should_run_agent
 from connections.aws import get_client, get_region
-from agent.analyzer_agent.main import generateRecommendations
 
 
 dynamodb = get_client("dynamodb")
@@ -209,19 +205,14 @@ async def list_dynamodb_tables(force: bool = False):
                     desc = dynamodb.describe_table(TableName=name)["Table"]
                     table_data = build_dynamodb_resource(desc, name)
                     table_data["is_optimized"] = db_item.get("is_optimized", False)
-                    recommendations = generateRecommendations(table_data)
-                    table_data["recommendations"] = recommendations
-                    table_data["last_agent_run"] = datetime.utcnow().isoformat()
-                    save_resource_in_db(name, "DynamoDB", table_data)
+                    table_data["needs_analysis"] = True
                 else:
                     table_data = db_item
                     table_data["resource_id"] = name
             else:
                 desc = dynamodb.describe_table(TableName=name)["Table"]
                 table_data = build_dynamodb_resource(desc, name)
-                recommendations = generateRecommendations(table_data)
-                table_data["recommendations"] = recommendations
-                save_resource_in_db(name, "DynamoDB", table_data)
+                table_data["needs_analysis"] = True
 
             tables.append(table_data)
 
