@@ -134,6 +134,8 @@ def _build_rec(
 def storage_utilization_agent(
     bundle: TelemetryBundle,
     signals: List[Signal],
+    *,
+    context: Optional[Dict[str, Any]] = None,
 ) -> List[Recommendation]:
 
     by = signals_by_name(signals)
@@ -273,6 +275,8 @@ def storage_utilization_agent(
 def cost_optimization_agent(
     bundle: TelemetryBundle,
     signals: List[Signal],
+    *,
+    context: Optional[Dict[str, Any]] = None,
 ) -> List[Recommendation]:
 
     by = signals_by_name(signals)
@@ -463,6 +467,8 @@ def cost_optimization_agent(
 def reliability_agent(
     bundle: TelemetryBundle,
     signals: List[Signal],
+    *,
+    context: Optional[Dict[str, Any]] = None,
 ) -> List[Recommendation]:
 
     by = signals_by_name(signals)
@@ -598,6 +604,8 @@ def reliability_agent(
 def security_agent(
     bundle: TelemetryBundle,
     signals: List[Signal],
+    *,
+    context: Optional[Dict[str, Any]] = None,
 ) -> List[Recommendation]:
 
     by = signals_by_name(signals)
@@ -714,6 +722,8 @@ def security_agent(
 def access_pattern_agent(
     bundle: TelemetryBundle,
     signals: List[Signal],
+    *,
+    context: Optional[Dict[str, Any]] = None,
 ) -> List[Recommendation]:
 
     by = signals_by_name(signals)
@@ -784,6 +794,8 @@ def access_pattern_agent(
 def root_cause_agent(
     bundle: TelemetryBundle,
     signals: List[Signal],
+    *,
+    context: Optional[Dict[str, Any]] = None,
 ) -> List[Recommendation]:
 
     """
@@ -795,6 +807,7 @@ def root_cause_agent(
         - explain storage anomalies
         - identify lifecycle strategy gaps
         - explain transfer-cost anomalies
+        - integrate cross-agent findings
 
     IMPORTANT:
         This agent NEVER generates direct boto3 actions.
@@ -830,6 +843,17 @@ def root_cause_agent(
         bundle.historical_trends or {}
     )
 
+    cross_findings = []
+    if context and context.get("cross_agent_findings"):
+        cross_findings = context["cross_agent_findings"][:10]
+
+    cross_section = ""
+    if cross_findings:
+        cross_section = (
+            f"Cross-agent findings:\n"
+            f"{json.dumps(cross_findings, default=str)}\n\n"
+        )
+
     prompt = (
         "You are a senior cloud storage SRE.\n\n"
 
@@ -840,7 +864,8 @@ def root_cause_agent(
         "- lifecycle inefficiencies\n"
         "- retrieval anomalies\n"
         "- storage growth behavior\n"
-        "- transfer-cost patterns\n\n"
+        "- transfer-cost patterns\n"
+        "- connections to findings from other agents\n\n"
 
         f"Signals:\n"
         f"{json.dumps(signal_summary, default=str)}\n\n"
@@ -850,6 +875,8 @@ def root_cause_agent(
 
         f"Historical trends:\n"
         f"{json.dumps(trends, default=str)}\n\n"
+
+        f"{cross_section}"
 
         "Return ONLY valid JSON:\n"
         "{\n"

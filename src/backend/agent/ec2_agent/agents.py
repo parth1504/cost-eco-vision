@@ -92,7 +92,7 @@ def _build_rec(
 # Metric Analyzer Agent
 # ---------------------------------------------------------------------------
 
-def metric_analyzer_agent(bundle: TelemetryBundle, signals: List[Signal]) -> List[Recommendation]:
+def metric_analyzer_agent(bundle: TelemetryBundle, signals: List[Signal], *, context: Optional[Dict[str, Any]] = None) -> List[Recommendation]:
     """
     Threshold + trend + anomaly observations. Surfaces *findings*; the
     cost/reliability agents convert them into actionable changes when
@@ -196,16 +196,25 @@ def metric_analyzer_agent(bundle: TelemetryBundle, signals: List[Signal]) -> Lis
 # Cost Optimization Agent
 # ---------------------------------------------------------------------------
 
-def cost_optimization_agent(bundle: TelemetryBundle, signals: List[Signal]) -> List[Recommendation]:
+def cost_optimization_agent(bundle: TelemetryBundle, signals: List[Signal], *, context: Optional[Dict[str, Any]] = None) -> List[Recommendation]:
     by = signals_by_name(signals)
     out: List[Recommendation] = []
     instance_id = bundle.instance_id
 
+    # Context-aware: boost confidence if metric agent already flagged idle/low-cpu
+    _cross = (context or {}).get("cross_agent_findings", [])
+    _metric_found_idle = any(
+        f.get("from_agent") == "ec2_metric" and "cpu" in f.get("title", "").lower()
+        for f in _cross
+    )
+
     # Idle → stop. High-confidence cost win when corroborated.
     if "instance_idle_high_cost" in by or "cpu_sustained_low" in by:
         sigs = [by[n] for n in ("instance_idle_high_cost", "cpu_sustained_low") if n in by]
-        # Boost confidence when both fire
+        # Boost confidence when corroborated by multiple signals or cross-agent findings
         conf = min(1.0, max(s.confidence for s in sigs) + (0.1 if len(sigs) > 1 else 0))
+        if _metric_found_idle:
+            conf = min(1.0, conf + 0.05)
         out.append(_build_rec(
             rule_id="ec2.cost.idle_stop",
             title="Idle Instance — Stop or Schedule",
@@ -334,9 +343,16 @@ def cost_optimization_agent(bundle: TelemetryBundle, signals: List[Signal]) -> L
 # Reliability Agent
 # ---------------------------------------------------------------------------
 
-def reliability_agent(bundle: TelemetryBundle, signals: List[Signal]) -> List[Recommendation]:
+def reliability_agent(bundle: TelemetryBundle, signals: List[Signal], *, context: Optional[Dict[str, Any]] = None) -> List[Recommendation]:
     by = signals_by_name(signals)
     out: List[Recommendation] = []
+
+    # Context-aware: if metric agent found high CPU, reliability issues are more urgent
+    _cross = (context or {}).get("cross_agent_findings", [])
+    _under_stress = any(
+        f.get("from_agent") == "ec2_metric" and "high" in f.get("title", "").lower()
+        for f in _cross
+    )
     instance_id = bundle.instance_id
 
     if "status_check_failures" in by or "reboot_loop_detected" in by:
@@ -374,11 +390,13 @@ def reliability_agent(bundle: TelemetryBundle, signals: List[Signal]) -> List[Re
 
     if "no_autoscaling" in by:
         s = by["no_autoscaling"]
+        # Escalate severity when the instance is already under CPU stress
+        no_asg_severity = Severity.HIGH if _under_stress else Severity.MEDIUM
         out.append(_build_rec(
             rule_id="ec2.reliability.no_asg",
             title="Single Instance — No Auto Scaling Group",
             rec_type=RecType.RELIABILITY,
-            severity=Severity.MEDIUM,
+            severity=no_asg_severity,
             category=RecCategory.WARNING,
             confidence=s.confidence,
             description=(
@@ -427,7 +445,7 @@ def reliability_agent(bundle: TelemetryBundle, signals: List[Signal]) -> List[Re
 # Security + Compliance Agent
 # ---------------------------------------------------------------------------
 
-def security_agent(bundle: TelemetryBundle, signals: List[Signal]) -> List[Recommendation]:
+def security_agent(bundle: TelemetryBundle, signals: List[Signal], *, context: Optional[Dict[str, Any]] = None) -> List[Recommendation]:
     by = signals_by_name(signals)
     out: List[Recommendation] = []
     instance_id = bundle.instance_id
@@ -552,7 +570,9 @@ def security_agent(bundle: TelemetryBundle, signals: List[Signal]) -> List[Recom
 
 def root_cause_agent(
     bundle: TelemetryBundle,
-    signals: List[Signal]
+    signals: List[Signal],
+    *,
+    context: Optional[Dict[str, Any]] = None,
 ) -> List[Recommendation]:
 
     """
@@ -566,6 +586,7 @@ def root_cause_agent(
             - scaling events
             - restarts
             - failures
+            - cross-agent findings (context-aware)
 
     Output format intentionally mirrors
     the legacy recommendation shape used
@@ -610,7 +631,24 @@ def root_cause_agent(
     event_summary = bundle.events[-10:]
 
     #
-    # Prompt
+    # Cross-agent findings (if available from context)
+    #
+    cross_findings = []
+    if context and context.get("cross_agent_findings"):
+        cross_findings = context["cross_agent_findings"][:10]
+
+    #
+    # Build cross-agent context section
+    #
+    cross_section = ""
+    if cross_findings:
+        cross_section = (
+            f"CROSS-AGENT FINDINGS:\n"
+            f"{json.dumps(cross_findings, default=str)}\n\n"
+        )
+
+    #
+    # Prompt — now includes cross-agent findings
     #
     prompt = (
 
@@ -622,13 +660,19 @@ def root_cause_agent(
         "1. Signals already extracted from telemetry\n"
 
         "2. Operational events "
-        "(deployments, scaling, restarts, incidents)\n\n"
+        "(deployments, scaling, restarts, incidents)\n"
+
+        "3. Findings from other specialist agents "
+        "(cost, reliability, security, metrics)\n\n"
 
         "Your job:\n"
 
         "- infer the MOST likely causal chain\n"
 
         "- build a SHORT operational timeline\n"
+
+        "- consider how findings from other agents "
+        "connect to the root cause\n"
 
         "- suggest next remediation actions\n\n"
 
@@ -645,6 +689,8 @@ def root_cause_agent(
 
         f"EVENTS:\n"
         f"{json.dumps(event_summary, default=str)}\n\n"
+
+        f"{cross_section}"
 
         "Return JSON in EXACTLY this shape:\n\n"
 

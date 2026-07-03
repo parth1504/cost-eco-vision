@@ -129,6 +129,8 @@ def _build_rec(
 def capacity_optimization_agent(
     bundle: TelemetryBundle,
     signals: List[Signal],
+    *,
+    context: Optional[Dict[str, Any]] = None,
 ) -> List[Recommendation]:
 
     by = signals_by_name(signals)
@@ -279,6 +281,8 @@ def capacity_optimization_agent(
 def performance_scalability_agent(
     bundle: TelemetryBundle,
     signals: List[Signal],
+    *,
+    context: Optional[Dict[str, Any]] = None,
 ) -> List[Recommendation]:
 
     by = signals_by_name(signals)
@@ -457,6 +461,8 @@ def performance_scalability_agent(
 def reliability_agent(
     bundle: TelemetryBundle,
     signals: List[Signal],
+    *,
+    context: Optional[Dict[str, Any]] = None,
 ) -> List[Recommendation]:
 
     by = signals_by_name(signals)
@@ -596,6 +602,8 @@ def reliability_agent(
 def root_cause_agent(
     bundle: TelemetryBundle,
     signals: List[Signal],
+    *,
+    context: Optional[Dict[str, Any]] = None,
 ) -> List[Recommendation]:
 
     """
@@ -608,6 +616,7 @@ def root_cause_agent(
         - explain partition imbalance
         - identify inefficient access patterns
         - explain autoscaling instability
+        - integrate cross-agent findings
 
     IMPORTANT:
         This agent NEVER generates direct boto3 actions.
@@ -643,6 +652,17 @@ def root_cause_agent(
         bundle.historical_trends or {}
     )
 
+    cross_findings = []
+    if context and context.get("cross_agent_findings"):
+        cross_findings = context["cross_agent_findings"][:10]
+
+    cross_section = ""
+    if cross_findings:
+        cross_section = (
+            f"Cross-agent findings:\n"
+            f"{json.dumps(cross_findings, default=str)}\n\n"
+        )
+
     prompt = (
         "You are a senior DynamoDB SRE.\n\n"
 
@@ -656,13 +676,16 @@ def root_cause_agent(
         "- autoscaling instability\n"
         "- workload access patterns\n"
         "- hot partitions\n"
-        "- latency anomalies\n\n"
+        "- latency anomalies\n"
+        "- connections to findings from other agents\n\n"
 
         f"Signals:\n"
         f"{json.dumps(signal_summary, default=str)}\n\n"
 
         f"Workload patterns:\n"
         f"{json.dumps(workload_patterns, default=str)}\n\n"
+
+        f"{cross_section}"
 
         f"Historical trends:\n"
         f"{json.dumps(trends, default=str)}\n\n"
