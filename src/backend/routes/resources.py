@@ -7,7 +7,7 @@ from services import resources
 from connections.db import get_resource_from_db, save_resource_in_db
 from aws.util import apply_aws_commands
 from services.resources import get_all_resources
-from agents.actions_agent import ActionsAgent
+from agent.actions_agent import ActionsAgent
 
 
 router = APIRouter(prefix="/resources", tags=["resources"])

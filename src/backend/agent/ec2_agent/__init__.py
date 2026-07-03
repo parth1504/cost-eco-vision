@@ -1,21 +1,11 @@
 """
-SRE Agent — production-grade EC2 infrastructure reasoning system.
+EC2 intelligence agent — production-grade infrastructure reasoning.
 
-Layered architecture (data flows top-down):
-
-    Collector  →  Normalizer  →  Signals (features + anomalies)
-        ↓
-    Specialized agents (Metric, Cost, Reliability, Security, Root-Cause)
-        ↓
-    Safety / Guardrails  →  Ranker / Dedup  →  Memory
-        ↓
-    Human-readable Recommendations
-
-Public entry point: `run_sre_agent(resource)`. Returns a list of
-recommendations in the same shape as the legacy analyzer so it's a
-drop-in replacement.
+Uses an LLM router (complex_orchestrator) to dynamically decide which
+specialist agent (metric, cost, reliability, security, root-cause) to
+invoke at each step based on signals and accumulated findings.
 """
 
-from agent.ec2_agent.orchestrator import run_sre_agent
+from agent.ec2_agent.complex_orchestrator import run_complex_agent
 
-__all__ = ["run_sre_agent"]
+__all__ = ["run_complex_agent"]

@@ -113,20 +113,33 @@ def dynamodb_specialist(state: AgentState) -> dict:
 
 
 def _run_specialist(state: AgentState, resource_type: str, agent_name: str) -> dict:
+    """
+    Collect recommendations for a resource type. Uses pre-existing
+    recommendations on the resource if available (from the AWS fetch layer),
+    otherwise generates fresh ones via generateRecommendations().
+    """
     from agent.analyzer_agent.main import generateRecommendations
 
     resources = [r for r in state.get("resources", []) if r.get("type") == resource_type]
     recs = []
     for resource in resources:
-        start = time.time()
-        try:
-            result = generateRecommendations(resource)
-            recs.extend(result)
-        except Exception as e:
-            logger.error("%s failed for %s: %s", agent_name, resource.get("resource_id"), e)
-        elapsed = (time.time() - start) * 1000
-        logger.info("%s processed %s in %.0fms — %d recs",
-                    agent_name, resource.get("resource_id"), elapsed, len(recs))
+        existing = resource.get("recommendations")
+        if existing:
+            for rec in existing:
+                rec.setdefault("resource_id", resource.get("resource_id", ""))
+            recs.extend(existing)
+        else:
+            start = time.time()
+            try:
+                result = generateRecommendations(resource)
+                for rec in result:
+                    rec.setdefault("resource_id", resource.get("resource_id", ""))
+                recs.extend(result)
+            except Exception as e:
+                logger.error("%s failed for %s: %s", agent_name, resource.get("resource_id"), e)
+            elapsed = (time.time() - start) * 1000
+            logger.info("%s processed %s in %.0fms — %d recs",
+                        agent_name, resource.get("resource_id"), elapsed, len(recs))
 
     findings = dict(state.get("findings", {}))
     findings[agent_name] = recs
