@@ -98,78 +98,42 @@ def supervisor(state: AgentState) -> dict:
 # ---------------------------------------------------------------------------
 
 def ec2_specialist(state: AgentState) -> dict:
-    """Run EC2 analysis on all EC2 resources."""
-    from agent.ec2_agent.complex_orchestrator import run_complex_agent
-
-    resources = [r for r in state.get("resources", []) if r.get("type") == "EC2"]
-    recs = []
-    for resource in resources:
-        start = time.time()
-        try:
-            result = run_complex_agent(resource)
-            recs.extend(result)
-        except Exception as e:
-            logger.error("EC2 specialist failed for %s: %s", resource.get("resource_id"), e)
-        elapsed = (time.time() - start) * 1000
-        logger.info("EC2 specialist processed %s in %.0fms — %d recommendations",
-                     resource.get("resource_id"), elapsed, len(result) if 'result' in dir() else 0)
-
-    findings = dict(state.get("findings", {}))
-    findings["ec2_specialist"] = recs
-    return {
-        "findings": findings,
-        "messages": [_message("ec2_specialist", "supervisor",
-                              f"Analyzed {len(resources)} EC2 resources — {len(recs)} recommendations")],
-    }
+    """Run EC2 analysis via the central analyzer entry point."""
+    return _run_specialist(state, "EC2", "ec2_specialist")
 
 
 def s3_specialist(state: AgentState) -> dict:
-    """Run S3 analysis on all S3 resources."""
-    from agent.s3_agent.orchestrator import run_s3_agent
-
-    resources = [r for r in state.get("resources", []) if r.get("type") == "S3"]
-    recs = []
-    for resource in resources:
-        start = time.time()
-        try:
-            result = run_s3_agent(resource)
-            recs.extend(result)
-        except Exception as e:
-            logger.error("S3 specialist failed for %s: %s", resource.get("resource_id"), e)
-        elapsed = (time.time() - start) * 1000
-        logger.info("S3 specialist processed %s in %.0fms", resource.get("resource_id"), elapsed)
-
-    findings = dict(state.get("findings", {}))
-    findings["s3_specialist"] = recs
-    return {
-        "findings": findings,
-        "messages": [_message("s3_specialist", "supervisor",
-                              f"Analyzed {len(resources)} S3 resources — {len(recs)} recommendations")],
-    }
+    """Run S3 analysis via the central analyzer entry point."""
+    return _run_specialist(state, "S3", "s3_specialist")
 
 
 def dynamodb_specialist(state: AgentState) -> dict:
-    """Run DynamoDB analysis on all DynamoDB resources."""
-    from agent.dynamodb_agent.orchestrator import run_dynamodb_agent
+    """Run DynamoDB analysis via the central analyzer entry point."""
+    return _run_specialist(state, "DynamoDB", "dynamodb_specialist")
 
-    resources = [r for r in state.get("resources", []) if r.get("type") == "DynamoDB"]
+
+def _run_specialist(state: AgentState, resource_type: str, agent_name: str) -> dict:
+    from agent.analyzer_agent.main import generateRecommendations
+
+    resources = [r for r in state.get("resources", []) if r.get("type") == resource_type]
     recs = []
     for resource in resources:
         start = time.time()
         try:
-            result = run_dynamodb_agent(resource)
+            result = generateRecommendations(resource)
             recs.extend(result)
         except Exception as e:
-            logger.error("DynamoDB specialist failed for %s: %s", resource.get("resource_id"), e)
+            logger.error("%s failed for %s: %s", agent_name, resource.get("resource_id"), e)
         elapsed = (time.time() - start) * 1000
-        logger.info("DynamoDB specialist processed %s in %.0fms", resource.get("resource_id"), elapsed)
+        logger.info("%s processed %s in %.0fms — %d recs",
+                    agent_name, resource.get("resource_id"), elapsed, len(recs))
 
     findings = dict(state.get("findings", {}))
-    findings["dynamodb_specialist"] = recs
+    findings[agent_name] = recs
     return {
         "findings": findings,
-        "messages": [_message("dynamodb_specialist", "supervisor",
-                              f"Analyzed {len(resources)} DynamoDB resources — {len(recs)} recommendations")],
+        "messages": [_message(agent_name, "supervisor",
+                              f"Analyzed {len(resources)} {resource_type} resources — {len(recs)} recommendations")],
     }
 
 
