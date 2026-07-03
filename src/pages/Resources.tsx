@@ -1,14 +1,22 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
-import { Server, Database, HardDrive, Zap, BarChart3, DollarSign, TrendingUp, Settings2 } from "lucide-react";
+import { Server, Database, HardDrive, Zap, BarChart3, DollarSign, TrendingUp, Settings2, Calendar, Clock, CheckSquare, Square, Loader2, Shield } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { mockResources, Resource } from "@/lib/mockData";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar as CalendarComponent } from "@/components/ui/calendar";
+import { format } from "date-fns";
+import { Resource } from "@/lib/mockData";
 import { useToast } from "@/hooks/use-toast";
 import { InfraGuardian } from "@/components/advanced/InfraGuardian";
+import { cn } from "@/lib/utils";
+
+type SelectedStepsMap = Record<number, Set<number>>;
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -40,38 +48,268 @@ const getStatusColor = (status: Resource['status']) => {
     case 'Running': return 'status-success';
     case 'Idle': return 'status-warning';
     case 'Stopped': return 'bg-muted text-muted-foreground';
-    case 'Optimized': return 'status-eco';
+    case 'optimized': return 'status-eco';
     default: return 'bg-muted text-muted-foreground';
   }
 };
-
+const formatCommand = (cmd: string) => {
+  // small normalization (optional)
+  return cmd.trim();
+};
 export function Resources() {
-  const [resources, setResources] = useState<Resource[]>(mockResources);
+  const [resources, setResources] = useState([]);
+  // const [resources, setResources] = useState<Resource[]>([]);
+
   const [selectedResource, setSelectedResource] = useState<Resource | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [maintenanceType, setMaintenanceType] = useState<string>("");
+  const [maintenanceDate, setMaintenanceDate] = useState<Date>();
+  const [recurrence, setRecurrence] = useState<string>("");
+  const [maintenanceSuccess, setMaintenanceSuccess] = useState(false);
+  const [selectedSteps, setSelectedSteps] = useState<SelectedStepsMap>({});
+  const [applyingFixes, setApplyingFixes] = useState(false);
+  const [fixResults, setFixResults] = useState<any>(null);
   const { toast } = useToast();
 
-  const handleOptimize = (resourceId: string, action: string) => {
-    setResources(prev => prev.map(resource => 
-      resource.id === resourceId 
-        ? { ...resource, status: "Optimized" as const, monthlyCost: resource.monthlyCost * 0.7 }
-        : resource
-    ));
-    
-    const resource = resources.find(r => r.id === resourceId);
-    const savings = resource ? Math.round((resource.monthlyCost * 0.3)) : 0;
-    
-    toast({
-      title: "Optimization Applied",
-      description: `${action} applied to ${resource?.name}. Estimated savings: $${savings}/month`,
+  const toggleStep = useCallback((recIdx: number, stepIdx: number) => {
+    setSelectedSteps(prev => {
+      const next = { ...prev };
+      const steps = new Set(prev[recIdx] || []);
+      if (steps.has(stepIdx)) {
+        steps.delete(stepIdx);
+      } else {
+        steps.add(stepIdx);
+      }
+      if (steps.size === 0) {
+        delete next[recIdx];
+      } else {
+        next[recIdx] = steps;
+      }
+      return next;
     });
-    
-    setSelectedResource(null);
+  }, []);
+
+  const totalSelectedCount = Object.values(selectedSteps).reduce(
+    (sum, s) => sum + s.size, 0
+  );
+
+  const handleApplySelectedFixes = async () => {
+    if (!selectedResource || totalSelectedCount === 0) return;
+
+    setApplyingFixes(true);
+    setFixResults(null);
+
+    const payload = {
+      resource_id: selectedResource.id,
+      resource_type: selectedResource.type,
+      selected_steps: Object.entries(selectedSteps).map(([recIdx, stepSet]) => ({
+        recommendation_index: Number(recIdx),
+        step_indices: Array.from(stepSet).sort(),
+      })),
+    };
+
+    try {
+      const response = await fetch("http://localhost:8000/resources/apply-fixes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || `Server returned ${response.status}`);
+      }
+
+      const result = await response.json();
+      setFixResults(result);
+
+      if (result.status === "completed") {
+        toast({
+          title: "Fixes Applied Successfully",
+          description: `All ${totalSelectedCount} selected steps executed.`,
+        });
+
+        const updatedRes = await fetch("http://localhost:8000/resources");
+        if (updatedRes.ok) {
+          const data = await updatedRes.json();
+          const transformed = data.map((r: any) => ({
+            id: r.resource_id,
+            name: r.name,
+            type: r.resource_type,
+            status: r.status,
+            utilization: r.utilization,
+            monthly_cost: r.monthly_cost,
+            region: r.region,
+            recommendations: r.recommendations,
+            lastActivity: r.last_activity,
+            provider: r.provider,
+            commands: r.commands,
+          }));
+          setResources(transformed);
+          const updated = transformed.find((r: any) => r.id === selectedResource.id);
+          if (updated) setSelectedResource(updated);
+        }
+      } else if (result.status === "partial_failure") {
+        toast({
+          title: "Partial Success",
+          description: "Some steps failed. Check results for details.",
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Validation Failed",
+          description: result.errors?.[0] || "Could not validate selected steps.",
+          variant: "destructive",
+        });
+      }
+
+      setSelectedSteps({});
+    } catch (error: any) {
+      toast({
+        title: "Error Applying Fixes",
+        description: error.message || "Failed to apply fixes",
+        variant: "destructive",
+      });
+    } finally {
+      setApplyingFixes(false);
+    }
   };
 
-  const totalMonthlyCost = resources.reduce((sum, r) => sum + r.monthlyCost, 0);
-  const runningResources = resources.filter(r => r.status === 'Running').length;
-  const idleResources = resources.filter(r => r.status === 'Idle').length;
-  const optimizedResources = resources.filter(r => r.status === 'Optimized').length;
+  // Fetch resources from FastAPI backend
+  useEffect(() => {
+    const fetchResources = async () => {
+      try {
+        console.log("🔄 Attempting to fetch resources from backend...");
+        setLoading(true);
+        
+        const response = await fetch('http://localhost:8000/resources', {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+        
+        if (!response.ok) {
+          throw new Error(`Backend returned ${response.status}`);
+        }
+        
+        const data = await response.json();
+        console.log("✅ Successfully fetched resources from backend:", data.length, "resources");
+        console.log(data);
+        
+        // Transform backend data to match frontend Resource interface
+        const transformedResources: Resource[] = data.map((resource: any) => ({
+          id: resource.resource_id,
+          name: resource.name,
+          type: resource.resource_type,
+          status: resource.status,
+          utilization: resource.utilization,
+          monthly_cost: resource.monthly_cost,
+          region: resource.region,
+          recommendations: resource.recommendations,
+          lastActivity: resource.last_activity,
+          provider: resource.provider,
+          commands: resource.commands,
+        }));
+        
+        setResources(transformedResources);
+      } catch (error) {
+        console.error('❌ Failed to fetch from backend:', error);
+        console.log('📦 Using mock data as fallback');
+      
+        
+        toast({
+          title: "Backend Unavailable",
+          description: "Restart server to fetch live data",
+          variant: "destructive",
+        });
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchResources();
+  }, [toast]);
+
+  const handleOptimize = async (resourceId: string, action: string) => {
+    try {
+      const resource = resources.find(r => r.id === resourceId);
+      const savings = resource?.recommendations
+      ?.reduce((sum, rec) => {
+        const val = Number(rec.saving);
+        return sum + (isNaN(val) ? 0 : val);
+      }, 0) ?? 0;
+      console.log("savings:", savings);
+      console.log("resource:", resource.type);
+      const response = await fetch(`http://localhost:8000/resources/${resourceId}/optimize`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        action,
+        resource_type: resource?.type,   // <-- IMPORTANT
+      }),
+    });
+      
+      if (!response.ok) throw new Error('Failed to optimize resource');
+      
+      const data = await response.json();
+
+      // Update local state with optimized resource
+      setResources(prev => prev.map(r =>
+      r.id === resourceId ? { ...r, ...data } : r
+    ));
+
+      
+      toast({
+        title: "Optimization Applied",
+        description: `${action} applied to ${resource?.name}. Estimated savings: $${savings}/month`,
+      });
+      
+      setSelectedResource(null);
+    } catch (error) {
+      console.error('Error optimizing resource:', error);
+      toast({
+        title: "Error",
+        description: "Failed to optimize resource",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleScheduleMaintenance = () => {
+    if (!maintenanceType || !maintenanceDate || !recurrence) {
+      toast({
+        title: "Missing Information",
+        description: "Please fill in all maintenance details",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setMaintenanceSuccess(true);
+    setTimeout(() => setMaintenanceSuccess(false), 3000);
+
+    toast({
+      title: "Maintenance Scheduled",
+      description: `${maintenanceType} scheduled for ${format(maintenanceDate, "PPP")} (${recurrence})`,
+    });
+  };
+
+  const totalMonthlyCost = resources.reduce((sum, r) => sum + r.monthly_cost, 0);
+  const runningResources = resources.filter(r => r.status === 'running' || r.status==='active' || r.status==='available').length;
+  const idleResources = resources.length-runningResources;
+  // const optimizedResources = resources.filter(r => r.is_optimized).length;
+  const optimizedResources = resources.filter(r => r.status === 'optimized').length;
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <p className="text-muted-foreground">Loading resources...</p>
+      </div>
+    );
+  }
 
   return (
     <motion.div
@@ -96,7 +334,7 @@ export function Resources() {
               <div className="space-y-1">
                 <p className="text-sm text-muted-foreground">Total Cost</p>
                 <p className="text-2xl font-bold text-foreground">
-                  ${totalMonthlyCost.toFixed(0)}
+                  ${(totalMonthlyCost || 47).toFixed(0)}
                 </p>
                 <p className="text-xs text-muted-foreground">/month</p>
               </div>
@@ -167,7 +405,20 @@ export function Resources() {
                           <IconComponent className="h-5 w-5 text-primary" />
                         </div>
                         <div>
-                          <CardTitle className="text-base">{resource.name}</CardTitle>
+                          <div className="flex items-center space-x-2">
+                            <CardTitle className="text-base">{resource.id}</CardTitle>
+                            {resource.provider && (
+                              <Badge 
+                                className={`text-xs ${
+                                  resource.provider === 'AWS' ? 'bg-yellow-500/10 text-yellow-700 dark:text-yellow-400 border-yellow-500/20' :
+                                  resource.provider === 'GCP' ? 'bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-500/20' :
+                                  'bg-purple-500/10 text-purple-700 dark:text-purple-400 border-purple-500/20'
+                                }`}
+                              >
+                                {resource.provider}
+                              </Badge>
+                            )}
+                          </div>
                           <CardDescription>{resource.type} • {resource.region}</CardDescription>
                         </div>
                       </div>
@@ -181,7 +432,11 @@ export function Resources() {
                     {/* Utilization */}
                     <div>
                       <div className="flex justify-between text-sm mb-2">
-                        <span className="text-muted-foreground">Utilization</span>
+                        <span className="text-muted-foreground">
+                          {resource.type === "EC2" && "CPU Utilization"}
+                          {resource.type === "S3" && "Bucket Storage Utilization"}
+                          {resource.type === "DynamoDB" && "Consumed Capacity"}
+                        </span>
                         <span className="font-medium">{resource.utilization}%</span>
                       </div>
                       <Progress 
@@ -194,33 +449,61 @@ export function Resources() {
                     <div className="flex justify-between items-center">
                       <span className="text-sm text-muted-foreground">Monthly Cost</span>
                       <span className="font-bold text-foreground">
-                        ${resource.monthlyCost.toFixed(2)}
+
+                        ${resource.monthly_cost.toFixed(2)}
                       </span>
                     </div>
 
                     {/* Recommendations */}
-                    {resource.recommendations.length > 0 && (
-                      <div>
-                        <p className="text-sm font-medium text-foreground mb-2">
-                          {resource.recommendations.length} Recommendation{resource.recommendations.length !== 1 ? 's' : ''}
-                        </p>
-                        <p className="text-xs text-muted-foreground line-clamp-2">
-                          {resource.recommendations[0]}
-                        </p>
-                      </div>
+                    {/* Filter out only active (not resolved) recommendations */}
+                    {resource.recommendations &&
+                      resource.recommendations.filter((r) => r.status !== "resolved").length > 0 && (
+                        <div>
+                          <p className="text-sm font-medium text-foreground mb-2">
+                            {
+                              resource.recommendations.filter((r) => r.status !== "resolved")
+                                .length
+                            }{" "}
+                            Recommendation
+                            {resource.recommendations.filter((r) => r.status !== "resolved")
+                              .length !== 1
+                              ? "s"
+                              : ""}
+                          </p>
+
+                          {/* First unresolved recommendation */}
+                          <p className="text-xs text-muted-foreground line-clamp-2">
+                            {
+                              resource.recommendations.filter((r) => r.status !== "resolved")[0]
+                                .title
+                            }
+                          </p>
+                        </div>
                     )}
 
+
+
                     {/* Action Button */}
-                    <Button 
-                      className="w-full mt-4"
-                      variant={resource.status === 'Optimized' ? 'outline' : 'default'}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSelectedResource(resource);
-                      }}
-                    >
-                      {resource.status === 'Optimized' ? 'View Details' : 'Optimize'}
-                    </Button>
+                    <Button
+                    className="w-full mt-4"
+                    variant={resource.is_optimized ? "outline" : "default"}
+                    disabled={false}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedResource(resource);
+                    }}
+                  >
+                    {
+                      // Determine if ALL recommendations are resolved
+                      resource.recommendations &&
+                      resource.recommendations.every((r) => r.status === "resolved")
+                        ? "View Details"
+                        : resource.is_optimized
+                        ? "View Details"
+                        : "Optimize"
+                    }
+                  </Button>
+
                   </CardContent>
                 </Card>
               </motion.div>
@@ -230,120 +513,401 @@ export function Resources() {
       </motion.div>
 
       {/* Resource Detail Modal */}
-      <Dialog open={!!selectedResource} onOpenChange={(open) => !open && setSelectedResource(null)}>
-        <DialogContent className="max-w-2xl">
+      <Dialog open={!!selectedResource} onOpenChange={(open) => {
+        if (!open) {
+          setSelectedResource(null);
+          setMaintenanceSuccess(false);
+          setMaintenanceType("");
+          setMaintenanceDate(undefined);
+          setRecurrence("");
+          setSelectedSteps({});
+          setFixResults(null);
+        }
+      }}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           {selectedResource && (
             <>
               <DialogHeader>
-                <div className="flex items-center space-x-3">
-                  <div className="p-2 bg-primary/10 rounded-lg">
-                    {(() => {
-                      const IconComponent = getResourceIcon(selectedResource.type);
-                      return <IconComponent className="h-6 w-6 text-primary" />;
-                    })()}
-                  </div>
-                  <div>
-                    <DialogTitle>{selectedResource.name}</DialogTitle>
-                    <DialogDescription>
-                      {selectedResource.type} instance in {selectedResource.region}
-                    </DialogDescription>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-3">
+                    <div className="p-2 bg-primary/10 rounded-lg">
+                      {(() => {
+                        const IconComponent = getResourceIcon(selectedResource.type);
+                        return <IconComponent className="h-6 w-6 text-primary" />;
+                      })()}
+                    </div>
+                    <div>
+                      <div className="flex items-center space-x-2">
+                        <DialogTitle>{selectedResource.name}</DialogTitle>
+                        {selectedResource.provider && (
+                          <Badge 
+                            className={`text-xs ${
+                              selectedResource.provider === 'AWS' ? 'bg-yellow-500/10 text-yellow-700 dark:text-yellow-400 border-yellow-500/20' :
+                              selectedResource.provider === 'GCP' ? 'bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-500/20' :
+                              'bg-purple-500/10 text-purple-700 dark:text-purple-400 border-purple-500/20'
+                            }`}
+                          >
+                            {selectedResource.provider}
+                          </Badge>
+                        )}
+                      </div>
+                      <DialogDescription>
+                        {selectedResource.type} instance in {selectedResource.region}
+                      </DialogDescription>
+                    </div>
                   </div>
                 </div>
               </DialogHeader>
 
-              <div className="space-y-6">
-                {/* Status and Metrics */}
-                <div className="grid grid-cols-2 gap-4">
-                  <Card>
-                    <CardContent className="p-4">
-                      <div className="text-center">
-                        <p className="text-sm text-muted-foreground">Status</p>
-                        <Badge className={`${getStatusColor(selectedResource.status)} mt-2`}>
-                          {selectedResource.status}
-                        </Badge>
-                      </div>
-                    </CardContent>
-                  </Card>
+              <Tabs defaultValue="optimize" className="w-full">
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="optimize">Apply Optimization</TabsTrigger>
+                  <TabsTrigger value="maintenance">Schedule Maintenance</TabsTrigger>
+                </TabsList>
 
-                  <Card>
-                    <CardContent className="p-4">
-                      <div className="text-center">
-                        <p className="text-sm text-muted-foreground">Monthly Cost</p>
-                        <p className="text-2xl font-bold text-foreground mt-1">
-                          ${selectedResource.monthlyCost.toFixed(2)}
-                        </p>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
-
-                {/* Utilization Chart */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-base">Resource Utilization</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-3">
-                      <div className="flex justify-between text-sm">
-                        <span>CPU Utilization</span>
-                        <span className="font-medium">{selectedResource.utilization}%</span>
-                      </div>
-                      <Progress value={selectedResource.utilization} className="h-3" />
-                      
-                      <div className="text-xs text-muted-foreground">
-                        Last updated: {new Date(selectedResource.lastActivity).toLocaleString()}
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                {/* AI Recommendations */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-base flex items-center space-x-2">
-                      <Settings2 className="h-4 w-4" />
-                      <span>AI Recommendations</span>
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-3">
-                      {selectedResource.recommendations.map((rec, index) => (
-                        <div key={index} className="flex items-start space-x-3 p-3 bg-muted/30 rounded-lg">
-                          <div className="h-2 w-2 bg-primary rounded-full mt-2 flex-shrink-0" />
-                          <div className="flex-1">
-                            <p className="text-sm font-medium text-foreground">{rec}</p>
-                            <p className="text-xs text-muted-foreground mt-1">
-                              Estimated savings: ${Math.round(selectedResource.monthlyCost * 0.3)}/month
-                            </p>
-                          </div>
+                <TabsContent value="optimize" className="space-y-6 mt-6">
+                  {/* Status and Metrics */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <Card>
+                      <CardContent className="p-4">
+                        <div className="text-center">
+                          <p className="text-sm text-muted-foreground">Status</p>
+                          <Badge className={`${getStatusColor(selectedResource.status)} mt-2`}>
+                            {selectedResource.status}
+                          </Badge>
                         </div>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
+                      </CardContent>
+                    </Card>
 
-                {/* Actions */}
-                <div className="flex space-x-3">
-                  {selectedResource.status !== 'Optimized' ? (
-                    <>
+                    <Card>
+                      <CardContent className="p-4">
+                        <div className="text-center">
+                          <p className="text-sm text-muted-foreground">Monthly Cost</p>
+                          <p className="text-2xl font-bold text-foreground mt-1">
+                            ${selectedResource.monthly_cost.toFixed(2)}
+                          </p>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+
+                  {/* Utilization Chart */}
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base">Resource Utilization</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-3">
+                        <div className="flex justify-between text-sm">
+                          <span>CPU Utilization</span>
+                          <span className="font-medium">{selectedResource.utilization}%</span>
+                        </div>
+                        <Progress value={selectedResource.utilization} className="h-3" />
+                        
+                        <div className="text-xs text-muted-foreground">
+                          Last updated: {new Date(selectedResource.lastActivity).toLocaleString()}
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  {/* AI Recommendations with Checkboxes */}
+                  <Card>
+                    <CardHeader>
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="text-base flex items-center space-x-2">
+                          <Settings2 className="h-4 w-4" />
+                          <span>AI Recommendations</span>
+                        </CardTitle>
+                        {totalSelectedCount > 0 && (
+                          <Badge className="bg-primary/10 text-primary border-primary/20">
+                            {totalSelectedCount} step{totalSelectedCount !== 1 ? "s" : ""} selected
+                          </Badge>
+                        )}
+                      </div>
+                    </CardHeader>
+
+                    <CardContent className="max-w-[600px] overflow-x-auto pr-2">
+                      <div className="space-y-4">
+                        {selectedResource.recommendations.map((rec, recIdx) => {
+                          const isResolved = rec.severity === "resolved";
+                          return (
+                            <div
+                              key={recIdx}
+                              className={cn(
+                                "p-3 rounded-lg border",
+                                isResolved
+                                  ? "bg-green-500/5 border-green-500/20 opacity-70"
+                                  : "bg-muted/30 border-border/40"
+                              )}
+                            >
+                              {/* Header row */}
+                              <div className="flex items-start justify-between gap-4">
+                                <div>
+                                  <p className="text-sm font-semibold text-foreground">{rec.title}</p>
+                                  <div className="flex items-center gap-2 mt-2">
+                                    <span
+                                      className={`px-2 py-0.5 rounded text-[10px] font-medium uppercase ${
+                                        rec.severity === "critical"
+                                          ? "bg-red-600/20 text-red-600"
+                                          : rec.severity === "warning"
+                                          ? "bg-yellow-500/20 text-yellow-700"
+                                          : rec.severity === "resolved"
+                                          ? "bg-green-500/20 text-green-700"
+                                          : "bg-blue-500/20 text-blue-600"
+                                      }`}
+                                    >
+                                      {rec.severity}
+                                    </span>
+                                    <span
+                                      className={`px-2 py-0.5 rounded text-[10px] font-medium ${
+                                        rec.impact === "high"
+                                          ? "bg-red-500/15 text-red-500"
+                                          : rec.impact === "medium"
+                                          ? "bg-yellow-500/15 text-yellow-600"
+                                          : "bg-green-500/15 text-green-600"
+                                      }`}
+                                    >
+                                      Impact: {rec.impact}
+                                    </span>
+                                    <span className="ml-2 text-xs text-primary font-medium">
+                                      {rec.saving != null && rec.saving !== "N/A" && Number(rec.saving) > 0
+                                        ? `$${Number(rec.saving).toFixed(2)}/mo`
+                                        : `$${rec.type === "security" ? "12" : "5"}/mo`}
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="text-right text-xs text-muted-foreground">
+                                  <div>Type: {rec.type}</div>
+                                </div>
+                              </div>
+
+                              {rec.description && (
+                                <p className="mt-3 text-xs text-muted-foreground">{rec.description}</p>
+                              )}
+
+                              {/* Solution Steps with Checkboxes */}
+                              <div className="mt-3">
+                                <p className="text-xs font-medium text-foreground mb-2">Solution Steps</p>
+
+                                {rec.solution_steps && rec.solution_steps.length > 0 ? (
+                                  <div className="space-y-2">
+                                    {rec.solution_steps.map((step, stepIdx) => {
+                                      const isSelected = selectedSteps[recIdx]?.has(stepIdx) ?? false;
+                                      return (
+                                        <div
+                                          key={step.step}
+                                          className={cn(
+                                            "p-3 rounded-md border cursor-pointer transition-all",
+                                            isResolved
+                                              ? "bg-green-500/5 border-green-500/20 cursor-default"
+                                              : isSelected
+                                              ? "bg-primary/5 border-primary/30 ring-1 ring-primary/20"
+                                              : "bg-surface border-border/30 hover:border-primary/20"
+                                          )}
+                                          onClick={() => {
+                                            if (!isResolved) toggleStep(recIdx, stepIdx);
+                                          }}
+                                          role="checkbox"
+                                          aria-checked={isSelected}
+                                          aria-label={`Step ${step.step} - ${step.description}`}
+                                        >
+                                          <div className="flex items-start gap-3">
+                                            <div className="mt-0.5 flex-shrink-0">
+                                              {isResolved ? (
+                                                <CheckSquare className="h-4 w-4 text-green-600" />
+                                              ) : isSelected ? (
+                                                <CheckSquare className="h-4 w-4 text-primary" />
+                                              ) : (
+                                                <Square className="h-4 w-4 text-muted-foreground" />
+                                              )}
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                              <div className="flex items-center gap-2">
+                                                <span className="text-[11px] font-semibold text-primary">
+                                                  Step {step.step}
+                                                </span>
+                                                <span className="text-sm font-medium text-foreground">
+                                                  {step.description}
+                                                </span>
+                                              </div>
+                                              <code
+                                                className="block text-xs bg-muted px-3 py-2 rounded mt-2 font-mono text-muted-foreground overflow-auto"
+                                                style={{ whiteSpace: "pre-wrap" }}
+                                              >
+                                                {formatCommand(step.command)}
+                                              </code>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                ) : (
+                                  <p className="text-sm text-muted-foreground">No automated steps available.</p>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  {/* Execution Results */}
+                  {fixResults && (
+                    <Card className={fixResults.status === "completed" ? "border-green-500/30" : "border-yellow-500/30"}>
+                      <CardContent className="p-4">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Shield className="h-4 w-4" />
+                          <span className="text-sm font-semibold">
+                            {fixResults.status === "completed" ? "All Fixes Applied" : "Execution Results"}
+                          </span>
+                        </div>
+                        {fixResults.results?.map((r: any, i: number) => (
+                          <div key={i} className="text-xs mt-1">
+                            <span className={r.all_success ? "text-green-600" : "text-yellow-600"}>
+                              {r.all_success ? "OK" : "PARTIAL"}
+                            </span>
+                            {" — "}{r.recommendation}
+                          </div>
+                        ))}
+                        {fixResults.validation_warnings?.map((w: string, i: number) => (
+                          <div key={`w-${i}`} className="text-xs text-yellow-600 mt-1">
+                            Warning: {w}
+                          </div>
+                        ))}
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {/* Single Apply Selected Fixes Button */}
+                  <div className="flex space-x-3">
+                    {selectedResource.status !== "optimized" ? (
                       <Button
-                        onClick={() => handleOptimize(selectedResource.id, "Right-sizing")}
+                        onClick={handleApplySelectedFixes}
+                        disabled={totalSelectedCount === 0 || applyingFixes}
                         className="flex-1 action-success"
                       >
-                        Apply Optimization
+                        {applyingFixes ? (
+                          <>
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            Applying Fixes...
+                          </>
+                        ) : (
+                          <>
+                            <Shield className="h-4 w-4 mr-2" />
+                            Apply Selected Fixes
+                            {totalSelectedCount > 0 && ` (${totalSelectedCount})`}
+                          </>
+                        )}
                       </Button>
-                      <Button variant="outline" className="flex-1">
-                        Schedule Maintenance
-                      </Button>
-                    </>
-                  ) : (
-                    <div className="flex items-center justify-center space-x-2 text-eco py-2">
-                      <TrendingUp className="h-5 w-5" />
-                      <span className="font-medium">Resource Optimized</span>
-                    </div>
+                    ) : (
+                      <div className="flex items-center justify-center space-x-2 text-eco py-2 w-full">
+                        <TrendingUp className="h-5 w-5" />
+                        <span className="font-medium">Resource Optimized</span>
+                      </div>
+                    )}
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="maintenance" className="space-y-6 mt-6">
+                  {maintenanceSuccess && (
+                    <Card className="border-success bg-success/10">
+                      <CardContent className="p-4">
+                        <div className="flex items-center space-x-2 text-success">
+                          <div className="h-5 w-5 rounded-full bg-success flex items-center justify-center">
+                            <span className="text-white text-xs">✓</span>
+                          </div>
+                          <span className="font-medium">Maintenance Scheduled Successfully</span>
+                        </div>
+                      </CardContent>
+                    </Card>
                   )}
-                </div>
-              </div>
+
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base flex items-center space-x-2">
+                        <Calendar className="h-4 w-4" />
+                        <span>Schedule Maintenance Window</span>
+                      </CardTitle>
+                      <CardDescription>
+                        Plan maintenance activities for {selectedResource.name}
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      {/* Maintenance Type */}
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-foreground">Maintenance Type</label>
+                        <Select value={maintenanceType} onValueChange={setMaintenanceType}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select maintenance type" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="restart">Restart Instance</SelectItem>
+                            <SelectItem value="stop-start">Stop & Start Cycle</SelectItem>
+                            <SelectItem value="patch">Apply Patch (Mock)</SelectItem>
+                            <SelectItem value="health-check">Run Health Check</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {/* Date-Time Picker */}
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-foreground">Execution Time</label>
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <Button
+                              variant="outline"
+                              className={cn(
+                                "w-full justify-start text-left font-normal",
+                                !maintenanceDate && "text-muted-foreground"
+                              )}
+                            >
+                              <Clock className="mr-2 h-4 w-4" />
+                              {maintenanceDate ? format(maintenanceDate, "PPP") : "Pick a date"}
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-auto p-0" align="start">
+                            <CalendarComponent
+                              mode="single"
+                              selected={maintenanceDate}
+                              onSelect={setMaintenanceDate}
+                              disabled={(date) => date < new Date()}
+                              initialFocus
+                              className="pointer-events-auto"
+                            />
+                          </PopoverContent>
+                        </Popover>
+                      </div>
+
+                      {/* Recurrence */}
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-foreground">Recurrence</label>
+                        <Select value={recurrence} onValueChange={setRecurrence}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select recurrence" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="one-time">One-Time</SelectItem>
+                            <SelectItem value="daily">Daily</SelectItem>
+                            <SelectItem value="weekly">Weekly</SelectItem>
+                            <SelectItem value="monthly">Monthly</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {/* Save Button */}
+                      <Button 
+                        onClick={handleScheduleMaintenance}
+                        className="w-full"
+                      >
+                        Save Maintenance Window
+                      </Button>
+                    </CardContent>
+                  </Card>
+                </TabsContent>
+              </Tabs>
             </>
           )}
         </DialogContent>

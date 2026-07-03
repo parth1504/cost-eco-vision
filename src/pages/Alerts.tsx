@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { AlertTriangle, CheckCircle, Clock, Filter, X } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -6,9 +6,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { mockAlerts, Alert } from "@/lib/mockData";
+import { Alert } from "@/lib/mockData";
 import { useToast } from "@/hooks/use-toast";
 import { IncidentCoordinator } from "@/components/advanced/IncidentCoordinator";
+// Removed Supabase import - now using FastAPI
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -25,30 +26,154 @@ const itemVariants = {
   visible: { opacity: 1, x: 0 }
 };
 
+const formatCommand = (cmd: string) => {
+  // small normalization (optional)
+  return cmd.trim();
+};
+
 export function Alerts() {
-  const [alerts, setAlerts] = useState<Alert[]>(mockAlerts);
+  const [alerts, setAlerts] = useState<Alert[]>([]);
   const [selectedAlert, setSelectedAlert] = useState<Alert | null>(null);
   const [filter, setFilter] = useState<"All" | "Critical" | "Warning" | "Info">("All");
+  const [loading, setLoading] = useState(true);
   const { toast } = useToast();
+
+  // Fetch alerts from FastAPI backend
+  useEffect(() => {
+    const fetchAlerts = async () => {
+      try {
+        console.log("🔄 Attempting to fetch alerts from backend...");
+        setLoading(true);
+        
+        const response = await fetch('http://localhost:8000/alerts', {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+        
+        if (!response.ok) {
+          throw new Error(`Backend returned ${response.status}`);
+        }
+        
+        const data = await response.json();
+        console.log("✅ Successfully fetched alerts from backend:", data.length, "alerts");
+        console.log(data);
+        
+        // Transform backend data to match frontend Alert interface
+        const transformedAlerts: Alert[] = data.map((alert: any) => ({
+          id: alert.id,
+          type: alert.source as Alert['type'],
+          severity: alert.severity,
+          title: alert.title,
+          description: alert.message,
+          suggestedAction: "Review and take appropriate action",
+          estimatedSavings: alert.saving,
+          resourceId: alert.affected_resources?.[0] || "",
+          timestamp: alert.timestamp,
+          status: alert.status === "active" ? "Active" : alert.status === "resolved" ? "Resolved" : "In Progress",
+          solution_steps: alert.solution_steps || []
+        }));
+        
+        setAlerts(transformedAlerts);
+      } catch (error) {
+        console.error('❌ Failed to fetch from backend:', error);
+        
+        toast({
+          title: "Backend Unavailable",
+          description: "Restart server to fetch live alerts",
+          variant: "destructive"
+        });
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchAlerts();
+  }, [toast]);
 
   const filteredAlerts = alerts.filter(alert => 
     filter === "All" || alert.severity === filter
   );
 
-  const handleApplyFix = (alertId: string) => {
-    setAlerts(prev => prev.map(alert => 
-      alert.id === alertId 
-        ? { ...alert, status: "Resolved" as const }
-        : alert
-    ));
-    
+const handleApplyFix = async (alertId: string) => {
+  try {
     const alert = alerts.find(a => a.id === alertId);
-    toast({
-      title: "Fix Applied Successfully",
-      description: `${alert?.title} has been resolved${alert?.estimatedSavings ? ` with $${alert.estimatedSavings}/month savings` : ''}`,
+
+    if (!alert) {
+      toast({
+        title: "Alert Not Found",
+        description: "Could not locate alert in state.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Send update request to backend
+    const response = await fetch(`http://localhost:8000/alerts/${alertId}`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        status: "resolved", // <-- lowercase for backend logic
+      }),
     });
-    
+
+    if (!response.ok) throw new Error("Failed to update alert in backend");
+
+    // Update local React state
+    setAlerts(prev =>
+      prev.map(a =>
+        a.id === alertId
+          ? { ...a, status: "Resolved" as const }
+          : a
+      )
+    );
+
+    toast({
+      title: "Fix Applied",
+      description: `${alert.title} has been resolved.`,
+    });
+
     setSelectedAlert(null);
+  } catch (error) {
+    console.error("Error applying fix:", error);
+    toast({
+      title: "Error",
+      description: "Failed to apply fix.",
+      variant: "destructive",
+    });
+  }
+};
+
+
+  const handleDismiss = async (alertId: string) => {
+    try {
+      // Call FastAPI backend to delete alert
+      const response = await fetch(`http://localhost:8000/alerts/${alertId}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) throw new Error('Failed to delete alert');
+
+      // Update local state
+      setAlerts(prev => prev.filter(a => a.id !== alertId));
+      
+      toast({
+        title: "Alert Dismissed",
+        description: "Alert has been removed",
+      });
+      
+      setSelectedAlert(null);
+    } catch (error) {
+      console.error('Error dismissing alert:', error);
+      toast({
+        title: "Error",
+        description: "Failed to dismiss alert",
+        variant: "destructive"
+      });
+    }
   };
 
   const getSeverityColor = (severity: Alert['severity']) => {
@@ -173,21 +298,30 @@ export function Alerts() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="overflow-x-auto">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Alert</th>
-                    <th>Type</th>
-                    <th>Severity</th>
-                    <th>Resource</th>
-                    <th>Status</th>
-                    <th>Potential Savings</th>
-                    <th>Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredAlerts.map((alert) => (
+            {loading ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="text-muted-foreground">Loading alerts...</div>
+              </div>
+            ) : filteredAlerts.length === 0 ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="text-muted-foreground">No alerts found</div>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Alert</th>
+                      <th>Type</th>
+                      <th>Severity</th>
+                      <th>Resource</th>
+                      <th>Status</th>
+                      <th>Potential Savings</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredAlerts.map((alert) => (
                     <motion.tr
                       key={alert.id}
                       variants={itemVariants}
@@ -206,7 +340,20 @@ export function Alerts() {
                         </div>
                       </td>
                       <td>
-                        <Badge variant="outline">{alert.type}</Badge>
+                        <div className="flex items-center space-x-2">
+                          <Badge variant="outline">{alert.type}</Badge>
+                          {alert.provider && (
+                            <Badge 
+                              className={`text-xs ${
+                                alert.provider === 'AWS' ? 'bg-yellow-500/10 text-yellow-700 dark:text-yellow-400 border-yellow-500/20' :
+                                alert.provider === 'GCP' ? 'bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-500/20' :
+                                'bg-purple-500/10 text-purple-700 dark:text-purple-400 border-purple-500/20'
+                              }`}
+                            >
+                              {alert.provider}
+                            </Badge>
+                          )}
+                        </div>
                       </td>
                       <td>
                         <Badge className={getSeverityColor(alert.severity)}>
@@ -219,20 +366,23 @@ export function Alerts() {
                         </code>
                       </td>
                       <td>
-                        <div className="flex items-center space-x-2">
+                        <div className="flex items-center  space-x-2">
                           {getStatusIcon(alert.status)}
                           <span className="text-sm">{alert.status}</span>
                         </div>
                       </td>
-                      <td>
-                        {alert.estimatedSavings ? (
+                     <td>
+                        {alert.estimatedSavings && alert.estimatedSavings !== "N/A" ? (
                           <span className="font-medium text-success">
                             ${alert.estimatedSavings}/mo
                           </span>
                         ) : (
-                          <span className="text-muted-foreground">Security Fix</span>
+                          <span className="text-muted-foreground">
+                            {alert.estimatedSavings === "N/A" ? "N/A" : "Security Fix"}
+                          </span>
                         )}
                       </td>
+
                       <td>
                         <Button
                           size="sm"
@@ -247,17 +397,18 @@ export function Alerts() {
                         </Button>
                       </td>
                     </motion.tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </CardContent>
         </Card>
       </motion.div>
 
       {/* Alert Detail Sheet */}
       <Sheet open={!!selectedAlert} onOpenChange={(open) => !open && setSelectedAlert(null)}>
-        <SheetContent className="w-[500px]">
+        <SheetContent className="w-[750px] max-w-[750px] overflow-y-auto">
           {selectedAlert && (
             <>
               <SheetHeader>
@@ -322,7 +473,48 @@ export function Alerts() {
                     <CardTitle className="text-base">AI Recommendation</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <p className="text-sm text-foreground">{selectedAlert.suggestedAction}</p>
+                    {/* <p className="text-sm text-foreground">{selectedAlert.description}</p> */}
+                    <div className="mt-3">
+                    <p className="text-xs font-medium text-foreground mb-2">Solution Steps</p>
+
+                      {selectedAlert.solution_steps && selectedAlert.solution_steps.length > 0 ? (
+                        <div className="space-y-2">
+                          {selectedAlert.solution_steps.map((step) => (
+                            <div
+                              key={step.step}
+                              className="p-3 bg-surface rounded-md border border-border/30"
+                              role="region"
+                              aria-label={`Step ${step.step} - ${step.description}`}
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[11px] font-semibold text-primary">
+                                      Step {step.step}
+                                    </span>
+                                    <span className="text-sm font-medium text-foreground">{step.description}</span>
+                                  </div>
+
+                                
+                                </div>
+
+                              
+                              </div>
+
+                              {/* command block */}
+                              <code
+                                className="block text-xs bg-muted px-3 py-2 rounded mt-2 font-mono text-muted-foreground overflow-auto"
+                                style={{ whiteSpace: "pre-wrap" }}
+                              >
+                                {formatCommand(step.command)}
+                              </code>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">No automated steps available.</p>
+                      )}
+                    </div>
                   </CardContent>
                 </Card>
 
@@ -330,14 +522,20 @@ export function Alerts() {
                 <div className="flex space-x-3">
                   {selectedAlert.status !== 'Resolved' ? (
                     <>
+                      {!(selectedAlert as any).manual_only && (
+                        <Button
+                          onClick={() => handleApplyFix(selectedAlert.id)}
+                          className="flex-1 action-success"
+                        >
+                          Apply Fix
+                        </Button>
+                      )}
                       <Button
-                        onClick={() => handleApplyFix(selectedAlert.id)}
-                        className="flex-1 action-success"
+                        variant="outline"
+                        className="flex-1"
+                        onClick={() => handleDismiss(selectedAlert.id)}
                       >
-                        Apply Fix
-                      </Button>
-                      <Button variant="outline" className="flex-1">
-                        Dismiss
+                        {(selectedAlert as any).manual_only ? "Acknowledge" : "Dismiss"}
                       </Button>
                     </>
                   ) : (
@@ -347,6 +545,12 @@ export function Alerts() {
                     </div>
                   )}
                 </div>
+                {(selectedAlert as any).manual_only && selectedAlert.status !== 'Resolved' && (
+                  <p className="text-xs text-muted-foreground mt-2">
+                    This recommendation requires manual action — Apply Fix is disabled
+                    because the remediation needs human input (e.g. choosing config values).
+                  </p>
+                )}
               </div>
             </>
           )}

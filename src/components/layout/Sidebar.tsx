@@ -10,7 +10,13 @@ import {
   Settings,
   ChevronLeft,
   Cloud,
-  Menu
+  Menu,
+  FileSearch,
+  Terminal,
+  GitPullRequest,
+  Cpu,
+  ChevronDown,
+  Brain,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -19,10 +25,22 @@ const navigation = [
   { name: "Overview", href: "/", icon: BarChart3 },
   { name: "Alerts", href: "/alerts", icon: AlertTriangle },
   { name: "Resources", href: "/resources", icon: Server },
-  { name: "Cost Optimization", href: "/cost-optimization", icon: DollarSign },
+  { name: "Cost Optimization", href: "/optimization", icon: DollarSign },
   { name: "Security", href: "/security", icon: Shield },
+  // { name: "Log Analyser", href: "/log-analyser", icon: FileSearch },
+  { name: "Engineering Intel", href: "/log-analyser", icon: FileSearch },
+  { name: "Agent Intelligence", href: "/agent-intelligence", icon: Brain },
   { name: "Settings", href: "/settings", icon: Settings },
 ];
+
+// const engineeringIntelligence = {
+//   name: "Engineering Intelligence",
+//   icon: Cpu,
+//   items: [
+//     { name: "Log Analyzer", href: "/engineering/log-analyzer", icon: Terminal },
+//     { name: "PR Reviewer", href: "/engineering/pr-reviewer", icon: GitPullRequest },
+//   ],
+// };
 
 interface SidebarProps {
   collapsed: boolean;
@@ -31,6 +49,10 @@ interface SidebarProps {
 
 export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const location = useLocation();
+  // const groupActive = engineeringIntelligence.items.some(
+  //   (i) => location.pathname === i.href
+  // );
+  const [groupOpen, setGroupOpen] = useState(true);
 
   return (
     <motion.div
@@ -118,6 +140,63 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
               </NavLink>
             );
           })}
+
+          {/* Engineering Intelligence Group */}
+          {/* <div className="pt-2">
+            {!collapsed && (
+              <button
+                onClick={() => setGroupOpen((o) => !o)}
+                className={cn(
+                  "w-full flex items-center px-3 py-2.5 text-sm font-medium rounded-lg transition-all duration-200",
+                  groupActive
+                    ? "text-sidebar-foreground"
+                    : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                )}
+              >
+                <engineeringIntelligence.icon className="h-5 w-5 flex-shrink-0 mr-3" />
+                <span className="flex-1 text-left">{engineeringIntelligence.name}</span>
+                <ChevronDown
+                  className={cn(
+                    "h-4 w-4 transition-transform",
+                    groupOpen ? "rotate-0" : "-rotate-90"
+                  )}
+                />
+              </button>
+            )}
+            {collapsed && (
+              <div className="flex items-center justify-center px-3 py-2.5 text-sidebar-foreground/60">
+                <engineeringIntelligence.icon className="h-5 w-5" />
+              </div>
+            )}
+
+            {(groupOpen || collapsed) && (
+              <div className={cn("mt-1 space-y-1", !collapsed && "ml-3 border-l border-sidebar-border pl-2")}>
+                {engineeringIntelligence.items.map((item) => {
+                  const isActive = location.pathname === item.href;
+                  return (
+                    <NavLink
+                      key={item.name}
+                      to={item.href}
+                      className={cn(
+                        "flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200",
+                        isActive
+                          ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
+                          : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                      )}
+                    >
+                      <item.icon
+                        className={cn(
+                          "h-4 w-4 flex-shrink-0",
+                          collapsed ? "mx-auto" : "mr-3"
+                        )}
+                      />
+                      {!collapsed && <span>{item.name}</span>}
+                    </NavLink>
+                  );
+                })}
+              </div>
+            )}
+          </div> */}
         </div>
       </nav>
 
