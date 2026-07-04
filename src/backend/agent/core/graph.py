@@ -2,20 +2,23 @@
 LangGraph StateGraph — unified multi-agent cloud optimization system.
 
 Single graph replaces every per-service orchestrator and the post-processing
-pipeline.  The supervisor node dynamically routes to telemetry collection,
-signal extraction, 15 service-specific sub-agents, safety/ranking, critique,
-refine, correlate, verify, and evaluate.
+pipeline. The supervisor node dynamically routes to telemetry collection,
+signal extraction, service-specific sub-agents (discovered from the registry),
+safety/ranking, critique, refine, correlate, verify, and evaluate.
+
+Sub-agent nodes are registered dynamically from the service registry.
+Adding a new AWS service auto-discovers its agents — no graph changes needed.
 
 Graph topology:
-    START → supervisor → collect_telemetry → supervisor
-                       → extract_signals   → supervisor
-                       → [15 sub-agent nodes] → supervisor
-                       → safety_and_rank   → supervisor
-                       → critique          → supervisor
-                       → refine            → supervisor
-                       → correlate         → supervisor
-                       → verify            → supervisor
-                       → evaluate          → END
+    START → supervisor → collect_telemetry     → supervisor
+                       → extract_signals       → supervisor
+                       → [N sub-agent nodes]   → supervisor
+                       → safety_and_rank       → supervisor
+                       → critique              → supervisor
+                       → refine               → supervisor
+                       → correlate            → supervisor
+                       → verify               → supervisor
+                       → evaluate             → END
 """
 
 from __future__ import annotations
@@ -41,19 +44,18 @@ from agent.core.nodes import (
 
 logger = logging.getLogger(__name__)
 
-_ALL_ROUTING_TARGETS = (
-    [
-        "collect_telemetry",
-        "extract_signals",
-        "safety_and_rank",
-        "critique",
-        "refine",
-        "correlate",
-        "verify",
-        "evaluate",
-    ]
-    + list(SUB_AGENT_NODES.keys())
-)
+_PIPELINE_NODES = [
+    "collect_telemetry",
+    "extract_signals",
+    "safety_and_rank",
+    "critique",
+    "refine",
+    "correlate",
+    "verify",
+    "evaluate",
+]
+
+_ALL_ROUTING_TARGETS = _PIPELINE_NODES + list(SUB_AGENT_NODES.keys())
 
 
 def _route_from_supervisor(state: AgentState) -> str:
@@ -63,7 +65,6 @@ def _route_from_supervisor(state: AgentState) -> str:
 def build_graph() -> StateGraph:
     graph = StateGraph(AgentState)
 
-    # --- Register nodes ---
     graph.add_node("supervisor", supervisor)
     graph.add_node("collect_telemetry", collect_telemetry)
     graph.add_node("extract_signals", extract_signals)
@@ -77,15 +78,12 @@ def build_graph() -> StateGraph:
     for name, fn in SUB_AGENT_NODES.items():
         graph.add_node(name, fn)
 
-    # --- Entry point ---
     graph.set_entry_point("supervisor")
 
-    # --- Supervisor conditional routing ---
     routing_map = {name: name for name in _ALL_ROUTING_TARGETS}
     routing_map["__end__"] = END
     graph.add_conditional_edges("supervisor", _route_from_supervisor, routing_map)
 
-    # --- Every non-terminal node returns to supervisor ---
     graph.add_edge("collect_telemetry", "supervisor")
     graph.add_edge("extract_signals", "supervisor")
     graph.add_edge("safety_and_rank", "supervisor")
@@ -97,7 +95,6 @@ def build_graph() -> StateGraph:
     for name in SUB_AGENT_NODES:
         graph.add_edge(name, "supervisor")
 
-    # --- Evaluate terminates ---
     graph.add_edge("evaluate", END)
 
     return graph

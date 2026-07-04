@@ -13,10 +13,8 @@ Pipeline nodes (in execution order):
   9. verify             — verification gates
  10. evaluate           — quality metrics + session persistence
 
-Sub-agent nodes (each wraps existing agent functions):
-  EC2:      ec2_metric, ec2_cost, ec2_reliability, ec2_security, ec2_root_cause
-  S3:       s3_storage, s3_cost, s3_reliability, s3_security, s3_access, s3_root_cause
-  DynamoDB: dynamodb_capacity, dynamodb_performance, dynamodb_reliability, dynamodb_root_cause
+Sub-agent nodes are registered dynamically from the service registry.
+Adding a new AWS service auto-discovers its agents — no changes here.
 """
 
 from __future__ import annotations
@@ -31,12 +29,12 @@ from agent.core.state import AgentState
 from agent.core.guardrails import run_all_gates, verify_conversation_depth
 from agent.core.evaluation import evaluation_engine
 from agent.core.memory import agent_memory
+from agent.core.registry import registry
 from agent.core.context import (
     build_agent_context,
     build_cross_agent_summary,
     build_critique_context,
     build_correlation_context,
-    SIGNAL_DOMAIN_MAP,
 )
 
 logger = logging.getLogger(__name__)
@@ -44,66 +42,9 @@ logger = logging.getLogger(__name__)
 MAX_REFINEMENT_ITERATIONS = 2
 MAX_CALLS_PER_AGENT = 2
 
-# Signal-domain mapping for rule-based routing (from complex_orchestrator)
-_EC2_COST_SIGNALS = {
-    "instance_idle_high_cost", "cpu_sustained_low",
-    "graviton_migration_candidate", "spot_candidate", "cpu_bursty",
-}
-_EC2_RELIABILITY_SIGNALS = {
-    "status_check_failures", "reboot_loop_detected",
-    "no_autoscaling", "single_az_deployment",
-}
-_EC2_SECURITY_SIGNALS = {
-    "imdsv1_in_use", "ebs_unencrypted",
-    "ssh_rdp_open_to_world", "ami_outdated",
-}
-_EC2_METRIC_SIGNALS = {
-    "cpu_sustained_high", "memory_pressure_detected",
-    "swap_exhaustion", "oom_killed", "ebs_burst_balance_low",
-    "network_saturation_detected",
-}
-
-# All sub-agent names the supervisor can route to
-_ALL_SUB_AGENTS = [
-    "ec2_metric", "ec2_cost", "ec2_reliability", "ec2_security", "ec2_root_cause",
-    "s3_storage", "s3_cost", "s3_reliability", "s3_security", "s3_access", "s3_root_cause",
-    "dynamodb_capacity", "dynamodb_performance", "dynamodb_reliability", "dynamodb_root_cause",
-]
-
-# LLM router system prompt
-_ROUTER_SYSTEM = """You are an intelligent orchestration router for an AWS cloud optimization agent system.
-Your job: given current signals, findings from agents that have already run, and call counts, decide which specialist agent to invoke next.
-
-Available agents:
-- ec2_metric              : CPU/memory/network/EBS threshold violations and trends
-- ec2_cost                : Idle instances, rightsizing, Graviton, Spot, ASG savings
-- ec2_reliability         : Health check failures, single-AZ, missing ASG
-- ec2_security            : IMDSv2 gaps, unencrypted EBS, open SSH/RDP, outdated AMIs
-- ec2_root_cause          : LLM-powered causal correlation of signals+events (call only when >=2 signals AND >=1 finding exist for EC2)
-- s3_storage              : Storage utilization anomalies, small object overhead
-- s3_cost                 : Lifecycle policies, tiering, cold storage opportunities
-- s3_reliability          : Versioning, replication, access logging gaps
-- s3_security             : Public access risks, encryption gaps
-- s3_access               : Retrieval spikes, transfer cost anomalies
-- s3_root_cause           : LLM-powered causal analysis for S3 (call only when >=2 S3 signals exist)
-- dynamodb_capacity       : Over/under provisioned RCU/WCU, on-demand vs provisioned
-- dynamodb_performance    : Throttling, hot partitions, retry storms
-- dynamodb_reliability    : PITR, replication lag, backups
-- dynamodb_root_cause     : LLM-powered causal analysis for DynamoDB (call only when >=2 DynamoDB signals exist)
-
-Routing rules:
-1. For EC2: start with ec2_metric (baseline), then route based on signal domains
-2. Root-cause agents should only run after domain agents have produced findings
-3. Respond DONE when all relevant signal domains are covered
-4. Never suggest an agent that has reached its call limit (max 2 calls each)
-5. Prioritize agents whose signal domains have the most unaddressed signals
-6. Consider cross-agent findings — if one agent found issues, related agents may find more
-
-Respond ONLY with valid JSON: {"next": "<agent_name_or_DONE>", "reason": "<one concise sentence>"}"""
-
 
 # ---------------------------------------------------------------------------
-# Collect Telemetry
+# Collect Telemetry — registry-driven
 # ---------------------------------------------------------------------------
 
 def collect_telemetry(state: AgentState) -> dict:
@@ -116,21 +57,10 @@ def collect_telemetry(state: AgentState) -> dict:
         rid = resource.get("resource_id", "")
         rtype = resource.get("type")
         try:
-            if rtype == "EC2":
-                from agent.ec2_agent.telemetry import collect_from_resource, normalize
-                bundles[rid] = normalize(collect_from_resource(resource))
-            elif rtype == "S3":
-                from agent.s3_agent.telemetry import (
-                    collect_from_resource as s3_collect,
-                    normalize as s3_normalize,
-                )
-                bundles[rid] = s3_normalize(s3_collect(resource))
-            elif rtype == "DynamoDB":
-                from agent.dynamodb_agent.telemetry import (
-                    collect_from_resource as ddb_collect,
-                    normalize as ddb_normalize,
-                )
-                bundles[rid] = ddb_normalize(ddb_collect(resource))
+            fns = registry.load_telemetry_functions(rtype)
+            collect_fn, normalize_fn = fns
+            if collect_fn and normalize_fn:
+                bundles[rid] = normalize_fn(collect_fn(resource))
         except Exception as e:
             logger.error("Telemetry collection failed for %s: %s", rid, e)
 
@@ -143,7 +73,7 @@ def collect_telemetry(state: AgentState) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Extract Signals
+# Extract Signals — registry-driven
 # ---------------------------------------------------------------------------
 
 def extract_signals(state: AgentState) -> dict:
@@ -155,15 +85,9 @@ def extract_signals(state: AgentState) -> dict:
     for rid, bundle in bundles.items():
         rtype = resource_types.get(rid)
         try:
-            if rtype == "EC2":
-                from agent.ec2_agent.signals import extract_signals as ec2_extract
-                signals_map[rid] = ec2_extract(bundle)
-            elif rtype == "S3":
-                from agent.s3_agent.signals import extract_signals as s3_extract
-                signals_map[rid] = s3_extract(bundle)
-            elif rtype == "DynamoDB":
-                from agent.dynamodb_agent.signals import extract_signals as ddb_extract
-                signals_map[rid] = ddb_extract(bundle)
+            extract_fn = registry.load_signal_extractor(rtype)
+            if extract_fn:
+                signals_map[rid] = extract_fn(bundle)
         except Exception as e:
             logger.error("Signal extraction failed for %s: %s", rid, e)
 
@@ -183,7 +107,6 @@ def extract_signals(state: AgentState) -> dict:
 def supervisor(state: AgentState) -> dict:
     findings = state.get("findings", {})
     has_findings = any(bool(v) for v in findings.values())
-    agent_counts = state.get("agent_call_counts", {})
     has_critique = bool(state.get("critique_results", {}).get("reviewed"))
     critique_issues = state.get("critique_results", {}).get("critique", [])
     has_correlations = bool(state.get("correlations"))
@@ -191,7 +114,6 @@ def supervisor(state: AgentState) -> dict:
     iteration = state.get("iteration", 0)
     resources = state.get("resources", [])
 
-    # Phase: collect telemetry
     if not state.get("telemetry_bundles"):
         return {
             "next_action": "collect_telemetry",
@@ -200,7 +122,6 @@ def supervisor(state: AgentState) -> dict:
                                     f"Starting telemetry collection for {len(resources)} resources")],
         }
 
-    # Phase: extract signals
     if not state.get("signals_map"):
         return {
             "next_action": "extract_signals",
@@ -209,7 +130,6 @@ def supervisor(state: AgentState) -> dict:
                                     "Telemetry ready — extracting intelligence signals")],
         }
 
-    # Phase: run sub-agents (LLM-powered routing with rule-based fallback)
     next_agent = _route_next_sub_agent(state)
     if next_agent:
         return {
@@ -219,7 +139,6 @@ def supervisor(state: AgentState) -> dict:
                                     next_agent[1])],
         }
 
-    # Phase: safety + rank
     if has_findings and not state.get("all_recommendations"):
         return {
             "next_action": "safety_and_rank",
@@ -228,7 +147,6 @@ def supervisor(state: AgentState) -> dict:
                                     "Sub-agents complete — running safety filter and ranking")],
         }
 
-    # Phase: critique
     if state.get("all_recommendations") and not has_critique:
         return {
             "next_action": "critique",
@@ -237,7 +155,6 @@ def supervisor(state: AgentState) -> dict:
                                     "Recommendations ready — requesting quality review")],
         }
 
-    # Phase: refine (if critique found issues)
     if critique_issues and iteration < MAX_REFINEMENT_ITERATIONS:
         return {
             "next_action": "refine",
@@ -247,7 +164,6 @@ def supervisor(state: AgentState) -> dict:
                                     f"Critique found {len(critique_issues)} issues — refining (iteration {iteration + 1})")],
         }
 
-    # Phase: correlate
     if not has_correlations and len(resources) > 1:
         return {
             "next_action": "correlate",
@@ -256,7 +172,6 @@ def supervisor(state: AgentState) -> dict:
                                     f"Checking cross-resource patterns across {len(resources)} resources")],
         }
 
-    # Phase: verify
     if not has_verified:
         return {
             "next_action": "verify",
@@ -265,7 +180,6 @@ def supervisor(state: AgentState) -> dict:
                                     "Running verification gates on recommendations")],
         }
 
-    # Phase: evaluate → done
     return {
         "next_action": "evaluate",
         "phase": "evaluate",
@@ -279,21 +193,39 @@ def supervisor(state: AgentState) -> dict:
 # ---------------------------------------------------------------------------
 
 def _route_next_sub_agent(state: AgentState) -> Optional[Tuple[str, str]]:
-    """
-    Pick the next sub-agent using LLM routing with rule-based fallback.
-    The LLM sees signals, findings, and call counts to make nuanced decisions.
-    """
-    # Try LLM routing first
     llm_result = _llm_route(state)
     if llm_result is not None:
         return llm_result
-
-    # Fall back to deterministic rule-based routing
     return _rule_based_route(state)
 
 
+def _build_router_system_prompt() -> str:
+    agent_descriptions = registry.get_router_agent_descriptions()
+    return (
+        "You are an intelligent orchestration router for an AWS "
+        "cloud optimization agent system.\n"
+        "Your job: given current signals, findings from agents that "
+        "have already run, and call counts, decide which specialist "
+        "agent to invoke next.\n\n"
+        f"Available agents:\n{agent_descriptions}\n\n"
+        "Routing rules:\n"
+        "1. Start with baseline agents before specialized ones\n"
+        "2. Root-cause agents should only run after domain agents "
+        "have produced findings\n"
+        "3. Respond DONE when all relevant signal domains are covered\n"
+        "4. Never suggest an agent that has reached its call limit "
+        "(max 2 calls each)\n"
+        "5. Prioritize agents whose signal domains have the most "
+        "unaddressed signals\n"
+        "6. Consider cross-agent findings — if one agent found issues, "
+        "related agents may find more\n\n"
+        'Respond ONLY with valid JSON: '
+        '{"next": "<agent_name_or_DONE>", '
+        '"reason": "<one concise sentence>"}'
+    )
+
+
 def _llm_route(state: AgentState) -> Optional[Tuple[str, str]]:
-    """LLM-powered routing decision. Returns None on failure (triggers fallback)."""
     signals_map = state.get("signals_map", {})
     resources = state.get("resources", [])
     agent_counts = state.get("agent_call_counts", {})
@@ -301,7 +233,6 @@ def _llm_route(state: AgentState) -> Optional[Tuple[str, str]]:
 
     resource_types = {r.get("resource_id"): r.get("type") for r in resources}
 
-    # Build signal summary for the LLM
     signal_summary = []
     for rid, signals in signals_map.items():
         rtype = resource_types.get(rid, "unknown")
@@ -316,7 +247,6 @@ def _llm_route(state: AgentState) -> Optional[Tuple[str, str]]:
     if not signal_summary:
         return None
 
-    # Build finding summary
     finding_summary = []
     for agent_name, recs in findings.items():
         for rec in recs[:5]:
@@ -327,9 +257,9 @@ def _llm_route(state: AgentState) -> Optional[Tuple[str, str]]:
                 "severity": rec.get("severity", ""),
             })
 
-    # Available agents (not at call limit)
+    all_agent_names = registry.get_all_agent_names()
     available = [
-        name for name in _ALL_SUB_AGENTS
+        name for name in all_agent_names
         if agent_counts.get(name, 0) < MAX_CALLS_PER_AGENT
     ]
 
@@ -345,13 +275,12 @@ def _llm_route(state: AgentState) -> Optional[Tuple[str, str]]:
         f"What should the orchestrator do next?"
     )
 
-    full_prompt = _ROUTER_SYSTEM + "\n\n" + user_msg
+    full_prompt = _build_router_system_prompt() + "\n\n" + user_msg
 
     try:
         from agent.llm.llm_client import get_llm_client
         text = get_llm_client().generate(full_prompt) or ""
 
-        # Extract JSON from response
         fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
         if fenced:
             text = fenced.group(1)
@@ -369,7 +298,7 @@ def _llm_route(state: AgentState) -> Optional[Tuple[str, str]]:
             logger.info("LLM router decided DONE: %s", reason)
             return None
 
-        if next_agent not in _ALL_SUB_AGENTS:
+        if next_agent not in all_agent_names:
             logger.warning("LLM suggested unknown agent '%s', falling back", next_agent)
             return None
 
@@ -386,7 +315,7 @@ def _llm_route(state: AgentState) -> Optional[Tuple[str, str]]:
 
 
 def _rule_based_route(state: AgentState) -> Optional[Tuple[str, str]]:
-    """Deterministic fallback routing based on signal domains and call counts."""
+    """Registry-driven deterministic routing based on signal domains."""
     signals_map = state.get("signals_map", {})
     resources = state.get("resources", [])
     agent_counts = state.get("agent_call_counts", {})
@@ -394,56 +323,44 @@ def _rule_based_route(state: AgentState) -> Optional[Tuple[str, str]]:
 
     resource_types = {r.get("resource_id"): r.get("type") for r in resources}
 
-    ec2_signals: set = set()
-    s3_signals: set = set()
-    ddb_signals: set = set()
+    signals_by_service: Dict[str, set] = {}
     for rid, signals in signals_map.items():
         rtype = resource_types.get(rid)
-        sig_names = {s.name for s in signals}
-        if rtype == "EC2":
-            ec2_signals |= sig_names
-        elif rtype == "S3":
-            s3_signals |= sig_names
-        elif rtype == "DynamoDB":
-            ddb_signals |= sig_names
+        if rtype:
+            sig_names = {s.name for s in signals}
+            signals_by_service.setdefault(rtype, set()).update(sig_names)
 
     candidates: List[Tuple[str, str, int]] = []
 
-    if ec2_signals:
-        candidates.extend(_ec2_routing_candidates(ec2_signals, agent_counts, state))
+    for service_type, service_signals in signals_by_service.items():
+        if not service_signals:
+            continue
+        service = registry.get_service(service_type)
+        if not service:
+            continue
 
-    if s3_signals:
-        s3_agents = [
-            ("s3_storage", "S3 storage utilization analysis"),
-            ("s3_cost", "S3 cost optimization analysis"),
-            ("s3_reliability", "S3 reliability analysis"),
-            ("s3_security", "S3 security analysis"),
-            ("s3_access", "S3 access pattern analysis"),
-            ("s3_root_cause", "S3 workload intelligence analysis"),
-        ]
-        for name, desc in s3_agents:
-            if agent_counts.get(name, 0) < MAX_CALLS_PER_AGENT:
-                priority = 1
-                if name == "s3_root_cause":
-                    has_s3_findings = any(bool(v) for k, v in findings.items() if k.startswith("s3_"))
-                    if not has_s3_findings or len(s3_signals) < 2:
-                        continue
-                candidates.append((name, desc, priority))
+        service_agent_names = set(service.agents.keys())
 
-    if ddb_signals:
-        ddb_agents = [
-            ("dynamodb_capacity", "DynamoDB capacity optimization analysis"),
-            ("dynamodb_performance", "DynamoDB performance analysis"),
-            ("dynamodb_reliability", "DynamoDB reliability analysis"),
-            ("dynamodb_root_cause", "DynamoDB workload intelligence analysis"),
-        ]
-        for name, desc in ddb_agents:
-            if agent_counts.get(name, 0) < MAX_CALLS_PER_AGENT:
-                if name == "dynamodb_root_cause":
-                    has_ddb_findings = any(bool(v) for k, v in findings.items() if k.startswith("dynamodb_"))
-                    if not has_ddb_findings or len(ddb_signals) < 2:
-                        continue
-                candidates.append((name, desc, 1))
+        for agent_name, agent_def in service.agents.items():
+            if agent_counts.get(agent_name, 0) >= MAX_CALLS_PER_AGENT:
+                continue
+
+            if agent_def.is_root_cause:
+                has_findings = any(
+                    bool(findings.get(a)) for a in service_agent_names
+                )
+                if not has_findings or len(service_signals) < 2:
+                    continue
+
+            if agent_def.routing_signals:
+                if not (service_signals & agent_def.routing_signals):
+                    continue
+
+            candidates.append((
+                agent_name,
+                agent_def.description,
+                agent_def.routing_priority,
+            ))
 
     if not candidates:
         return None
@@ -452,55 +369,25 @@ def _rule_based_route(state: AgentState) -> Optional[Tuple[str, str]]:
     return (candidates[0][0], f"[Rule] {candidates[0][1]}")
 
 
-def _ec2_routing_candidates(
-    signal_names: set,
-    agent_counts: Dict[str, int],
-    state: AgentState,
-) -> List[Tuple[str, str, int]]:
-    candidates = []
-    findings = state.get("findings", {})
-
-    if agent_counts.get("ec2_metric", 0) < MAX_CALLS_PER_AGENT:
-        candidates.append(("ec2_metric", "Baseline metric analysis for EC2 resources", 10))
-
-    if signal_names & _EC2_COST_SIGNALS and agent_counts.get("ec2_cost", 0) < MAX_CALLS_PER_AGENT:
-        candidates.append(("ec2_cost",
-                           f"Cost signals detected: {signal_names & _EC2_COST_SIGNALS}", 8))
-
-    if signal_names & _EC2_RELIABILITY_SIGNALS and agent_counts.get("ec2_reliability", 0) < MAX_CALLS_PER_AGENT:
-        candidates.append(("ec2_reliability",
-                           f"Reliability signals detected: {signal_names & _EC2_RELIABILITY_SIGNALS}", 7))
-
-    if signal_names & _EC2_SECURITY_SIGNALS and agent_counts.get("ec2_security", 0) < MAX_CALLS_PER_AGENT:
-        candidates.append(("ec2_security",
-                           f"Security signals detected: {signal_names & _EC2_SECURITY_SIGNALS}", 6))
-
-    has_ec2_findings = any(bool(v) for k, v in findings.items() if k.startswith("ec2_"))
-    if (len(signal_names) >= 2 and has_ec2_findings
-            and agent_counts.get("ec2_root_cause", 0) < MAX_CALLS_PER_AGENT):
-        candidates.append(("ec2_root_cause",
-                           "Sufficient signals and findings for causal correlation", 3))
-
-    return candidates
-
-
 # ---------------------------------------------------------------------------
-# Sub-agent nodes — context-aware factory wrappers
+# Sub-agent node — registry-driven generic wrapper
 # ---------------------------------------------------------------------------
 
-def _run_sub_agent_node(
-    state: AgentState,
-    agent_name: str,
-    service_type: str,
-    agent_fn_path: str,
-    agent_fn_name: str,
-) -> dict:
+def _run_sub_agent_node(state: AgentState, agent_name: str) -> dict:
     """
     Generic wrapper for any sub-agent node.
-    Builds curated context from cross-agent findings and passes it
-    alongside telemetry and signals so agents can make informed decisions.
+    Looks up the agent function, service type, and report converter
+    from the registry. Builds curated context from cross-agent findings.
     """
-    import importlib
+    agent_def = registry.get_agent_definition(agent_name)
+    service = registry.get_service_for_agent(agent_name)
+    if not agent_def or not service:
+        logger.error("Unknown agent %s — not in registry", agent_name)
+        return {}
+
+    service_type = service.service_type
+    agent_fn = registry.load_agent_function(agent_name)
+
     bundles = state.get("telemetry_bundles", {})
     signals_map = state.get("signals_map", {})
     findings = state.get("findings", {})
@@ -510,14 +397,9 @@ def _run_sub_agent_node(
         if r.get("type") == service_type and not r.get("recommendations")
     ]
 
-    module = importlib.import_module(agent_fn_path)
-    agent_fn = getattr(module, agent_fn_name)
-
-    # Build cross-agent context: what other agents have found
     cross_findings = build_cross_agent_summary(findings, agent_name)
 
-    # Collect all existing recs as prior context
-    all_prior_recs = []
+    all_prior_recs: List[Dict[str, Any]] = []
     for recs_list in findings.values():
         all_prior_recs.extend(recs_list)
 
@@ -529,10 +411,13 @@ def _run_sub_agent_node(
         if not bundle:
             continue
 
-        # Build curated context for this agent + resource
         signal_dicts = [
-            {"name": s.name, "severity": s.severity.value if hasattr(s.severity, "value") else str(s.severity),
-             "confidence": s.confidence, "description": s.description}
+            {
+                "name": s.name,
+                "severity": s.severity.value if hasattr(s.severity, "value") else str(s.severity),
+                "confidence": s.confidence,
+                "description": s.description,
+            }
             for s in signals
         ]
         agent_context = build_agent_context(
@@ -551,7 +436,6 @@ def _run_sub_agent_node(
                 rec_dict = _to_dict(rec, service_type, rid)
                 recs.append(rec_dict)
         except TypeError:
-            # Agent doesn't accept context kwarg yet — call without it
             try:
                 result = agent_fn(bundle, signals)
                 for rec in result:
@@ -587,85 +471,22 @@ def _to_dict(rec: Any, service_type: str, resource_id: str) -> Dict[str, Any]:
         rec.setdefault("resource_id", resource_id)
         return rec
 
-    if service_type == "EC2":
-        from agent.ec2_agent.report import to_legacy_dict
-    elif service_type == "S3":
-        from agent.s3_agent.report import to_legacy_dict
-    elif service_type == "DynamoDB":
-        from agent.dynamodb_agent.report import to_legacy_dict
-    else:
-        return {"resource_id": resource_id}
+    to_legacy = registry.load_report_converter(service_type)
+    if to_legacy:
+        d = to_legacy(rec)
+        d["resource_id"] = resource_id
+        return d
 
-    d = to_legacy_dict(rec)
-    d["resource_id"] = resource_id
-    return d
+    return {"resource_id": resource_id}
 
 
-# --- EC2 sub-agent nodes ---
-
-def ec2_metric(state: AgentState) -> dict:
-    return _run_sub_agent_node(state, "ec2_metric", "EC2",
-                               "agent.ec2_agent.agents", "metric_analyzer_agent")
-
-def ec2_cost(state: AgentState) -> dict:
-    return _run_sub_agent_node(state, "ec2_cost", "EC2",
-                               "agent.ec2_agent.agents", "cost_optimization_agent")
-
-def ec2_reliability(state: AgentState) -> dict:
-    return _run_sub_agent_node(state, "ec2_reliability", "EC2",
-                               "agent.ec2_agent.agents", "reliability_agent")
-
-def ec2_security(state: AgentState) -> dict:
-    return _run_sub_agent_node(state, "ec2_security", "EC2",
-                               "agent.ec2_agent.agents", "security_agent")
-
-def ec2_root_cause(state: AgentState) -> dict:
-    return _run_sub_agent_node(state, "ec2_root_cause", "EC2",
-                               "agent.ec2_agent.agents", "root_cause_agent")
-
-# --- S3 sub-agent nodes ---
-
-def s3_storage(state: AgentState) -> dict:
-    return _run_sub_agent_node(state, "s3_storage", "S3",
-                               "agent.s3_agent.agents", "storage_utilization_agent")
-
-def s3_cost(state: AgentState) -> dict:
-    return _run_sub_agent_node(state, "s3_cost", "S3",
-                               "agent.s3_agent.agents", "cost_optimization_agent")
-
-def s3_reliability(state: AgentState) -> dict:
-    return _run_sub_agent_node(state, "s3_reliability", "S3",
-                               "agent.s3_agent.agents", "reliability_agent")
-
-def s3_security(state: AgentState) -> dict:
-    return _run_sub_agent_node(state, "s3_security", "S3",
-                               "agent.s3_agent.agents", "security_agent")
-
-def s3_access(state: AgentState) -> dict:
-    return _run_sub_agent_node(state, "s3_access", "S3",
-                               "agent.s3_agent.agents", "access_pattern_agent")
-
-def s3_root_cause(state: AgentState) -> dict:
-    return _run_sub_agent_node(state, "s3_root_cause", "S3",
-                               "agent.s3_agent.agents", "root_cause_agent")
-
-# --- DynamoDB sub-agent nodes ---
-
-def dynamodb_capacity(state: AgentState) -> dict:
-    return _run_sub_agent_node(state, "dynamodb_capacity", "DynamoDB",
-                               "agent.dynamodb_agent.agents", "capacity_optimization_agent")
-
-def dynamodb_performance(state: AgentState) -> dict:
-    return _run_sub_agent_node(state, "dynamodb_performance", "DynamoDB",
-                               "agent.dynamodb_agent.agents", "performance_scalability_agent")
-
-def dynamodb_reliability(state: AgentState) -> dict:
-    return _run_sub_agent_node(state, "dynamodb_reliability", "DynamoDB",
-                               "agent.dynamodb_agent.agents", "reliability_agent")
-
-def dynamodb_root_cause(state: AgentState) -> dict:
-    return _run_sub_agent_node(state, "dynamodb_root_cause", "DynamoDB",
-                               "agent.dynamodb_agent.agents", "root_cause_agent")
+def _make_sub_agent_node(agent_name: str):
+    """Factory: create a LangGraph node function for a registered agent."""
+    def node_fn(state: AgentState) -> dict:
+        return _run_sub_agent_node(state, agent_name)
+    node_fn.__name__ = agent_name
+    node_fn.__qualname__ = agent_name
+    return node_fn
 
 
 # ---------------------------------------------------------------------------
@@ -733,13 +554,10 @@ def critique(state: AgentState) -> dict:
             "messages": [_message("critique", "supervisor", "No recommendations to review")],
         }
 
-    # Rule-based critique (fast, deterministic)
     critiques = _rule_based_critique(recommendations)
 
-    # LLM critique for deeper quality review
     llm_critiques = _llm_critique(recommendations)
     if llm_critiques:
-        # Merge LLM findings with rule-based, avoiding duplicates
         existing_rules = {c["rule_id"] for c in critiques}
         for lc in llm_critiques:
             if lc.get("rule_id") not in existing_rules:
@@ -791,7 +609,6 @@ def _rule_based_critique(recommendations: List[Dict[str, Any]]) -> List[Dict[str
 
 
 def _llm_critique(recommendations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Use LLM to identify quality issues that rule-based checks miss."""
     if len(recommendations) == 0:
         return []
 
@@ -830,7 +647,6 @@ def _llm_critique(recommendations: List[Dict[str, Any]]) -> List[Dict[str, Any]]
         from agent.llm.llm_client import get_llm_client
         text = get_llm_client().generate(prompt) or ""
 
-        # Extract JSON array
         fenced = re.search(r"```(?:json)?\s*(\[.*?\])\s*```", text, re.DOTALL)
         if fenced:
             text = fenced.group(1)
@@ -926,10 +742,8 @@ def correlate(state: AgentState) -> dict:
     findings = state.get("findings", {})
     correlations = []
 
-    # Rule-based correlations (fast, deterministic)
     correlations.extend(_rule_based_correlations(resources, all_recs))
 
-    # LLM-powered deep correlation analysis
     llm_correlations = _llm_correlate(resources, all_recs, findings)
     if llm_correlations:
         correlations.extend(llm_correlations)
@@ -949,7 +763,6 @@ def _rule_based_correlations(
 ) -> List[Dict[str, Any]]:
     correlations = []
 
-    # Compound savings: multiple idle resources
     idle_recs = [r for r in all_recs if "idle" in (r.get("title") or "").lower()]
     if len(idle_recs) >= 2:
         total_savings = sum(
@@ -966,7 +779,6 @@ def _rule_based_correlations(
             "source": "rule",
         })
 
-    # Recurring security gaps
     security_recs = [r for r in all_recs if r.get("type") == "security"]
     title_counts: Dict[str, int] = {}
     for r in security_recs:
@@ -982,7 +794,6 @@ def _rule_based_correlations(
                 "source": "rule",
             })
 
-    # Co-located service resources
     by_service: Dict[str, List[str]] = {}
     for r in resources:
         svc = (r.get("tags") or {}).get("Service", "")
@@ -1010,7 +821,6 @@ def _llm_correlate(
     all_recs: List[Dict[str, Any]],
     findings: Dict[str, List[Dict[str, Any]]],
 ) -> List[Dict[str, Any]]:
-    """Use LLM to find non-obvious cross-resource patterns."""
     if len(resources) < 2 or len(all_recs) < 2:
         return []
 
@@ -1203,21 +1013,11 @@ def _trace_step(agent_name: str, finding_count: int, state: AgentState) -> Dict[
     }
 
 
-# All sub-agent node names for graph registration
+# ---------------------------------------------------------------------------
+# Dynamic sub-agent node map — built from registry
+# ---------------------------------------------------------------------------
+
 SUB_AGENT_NODES = {
-    "ec2_metric": ec2_metric,
-    "ec2_cost": ec2_cost,
-    "ec2_reliability": ec2_reliability,
-    "ec2_security": ec2_security,
-    "ec2_root_cause": ec2_root_cause,
-    "s3_storage": s3_storage,
-    "s3_cost": s3_cost,
-    "s3_reliability": s3_reliability,
-    "s3_security": s3_security,
-    "s3_access": s3_access,
-    "s3_root_cause": s3_root_cause,
-    "dynamodb_capacity": dynamodb_capacity,
-    "dynamodb_performance": dynamodb_performance,
-    "dynamodb_reliability": dynamodb_reliability,
-    "dynamodb_root_cause": dynamodb_root_cause,
+    name: _make_sub_agent_node(name)
+    for name in registry.get_all_agent_names()
 }

@@ -8,148 +8,21 @@ an LLM directly — this layer curates the context window with:
   - Cross-agent findings (what other agents have already found)
   - Session history (what has already been decided)
 
-This prevents prompt pollution and keeps each agent focused on its domain.
+Signal domains and rec-type relevance are loaded from the dynamic
+service registry — adding a new service automatically extends context
+filtering without touching this file.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
+
+from agent.core.registry import registry
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Signal → sub-agent domain mapping
-# ---------------------------------------------------------------------------
-# Maps each sub-agent node name to the signals it cares about.
-# Agents only see signals in their domain — prevents prompt pollution.
-
-SIGNAL_DOMAIN_MAP = {
-    # --- EC2 sub-agents ---
-    "ec2_metric": {
-        "cpu_sustained_high", "cpu_sustained_low", "cpu_bursty", "cpu_anomaly",
-        "memory_pressure_detected", "swap_exhaustion", "oom_killed",
-        "ebs_burst_balance_low", "network_saturation_detected", "packet_drops_observed",
-        "disk_full_risk",
-    },
-    "ec2_cost": {
-        "instance_idle_high_cost", "cpu_sustained_low", "cpu_bursty",
-        "graviton_migration_candidate", "spot_candidate",
-    },
-    "ec2_reliability": {
-        "status_check_failures", "reboot_loop_detected",
-        "no_autoscaling", "single_az_deployment",
-    },
-    "ec2_security": {
-        "imdsv1_in_use", "ebs_unencrypted",
-        "ssh_rdp_open_to_world", "ami_outdated",
-    },
-    "ec2_root_cause": {
-        "cpu_sustained_high", "cpu_sustained_low", "cpu_bursty", "cpu_anomaly",
-        "memory_pressure_detected", "swap_exhaustion", "oom_killed",
-        "ebs_burst_balance_low", "network_saturation_detected",
-        "status_check_failures", "reboot_loop_detected",
-        "deployment_correlated_latency_spike", "disk_full_risk",
-    },
-
-    # --- S3 sub-agents ---
-    "s3_storage": {
-        "excessive_small_objects_detected", "bucket_growth_abnormal",
-        "storage_growth_anomaly", "stale_data_accumulation", "small_object_overhead",
-    },
-    "s3_cost": {
-        "missing_lifecycle_policy", "cold_storage_candidate",
-        "intelligent_tiering_underutilized", "no_lifecycle_policy",
-        "intelligent_tiering_candidate", "glacier_candidate",
-        "high_retrieval_cost", "cross_region_transfer_cost",
-    },
-    "s3_reliability": {
-        "versioning_disabled", "replication_failures_detected",
-        "no_versioning", "no_replication", "no_access_logging",
-    },
-    "s3_security": {
-        "public_access_risk_detected", "unencrypted_storage_detected",
-        "public_bucket_detected", "no_encryption",
-    },
-    "s3_access": {
-        "retrieval_spike_detected", "transfer_cost_anomaly_detected",
-        "high_retrieval_cost", "cross_region_transfer_cost",
-    },
-    "s3_root_cause": {
-        "storage_growth_anomaly", "stale_data_accumulation",
-        "public_bucket_detected", "no_encryption", "no_versioning",
-        "retrieval_spike_detected", "transfer_cost_anomaly_detected",
-        "missing_lifecycle_policy", "bucket_growth_abnormal",
-    },
-
-    # --- DynamoDB sub-agents ---
-    "dynamodb_capacity": {
-        "overprovisioned_rcu_detected", "overprovisioned_wcu_detected",
-        "overprovisioned_rcu", "overprovisioned_wcu",
-        "underprovisioned_rcu", "underprovisioned_wcu",
-        "gsi_overprovisioned", "on_demand_candidate", "provisioned_candidate",
-    },
-    "dynamodb_performance": {
-        "throttling_detected", "hot_partition_detected", "retry_storm_detected",
-        "retry_storm", "scan_heavy_workload", "latency_anomaly",
-    },
-    "dynamodb_reliability": {
-        "pitr_disabled", "replication_lag_detected",
-        "replication_lag_high", "no_backup", "autoscaling_flapping",
-    },
-    "dynamodb_root_cause": {
-        "throttling_detected", "hot_partition_detected", "retry_storm_detected",
-        "overprovisioned_rcu_detected", "overprovisioned_wcu_detected",
-        "pitr_disabled", "replication_lag_detected",
-        "scan_heavy_workload", "latency_anomaly", "autoscaling_flapping",
-    },
-
-    # --- Legacy broad mappings (kept for backward compat) ---
-    "ec2_specialist": {
-        "cpu_sustained_high", "cpu_sustained_low", "cpu_bursty", "cpu_anomaly",
-        "memory_pressure_detected", "swap_exhaustion", "oom_killed",
-        "ebs_burst_balance_low", "network_saturation_detected", "packet_drops_observed",
-        "status_check_failures", "reboot_loop_detected", "no_autoscaling",
-        "single_az_deployment", "imdsv1_in_use", "ebs_unencrypted",
-        "ssh_rdp_open_to_world", "ami_outdated", "instance_idle_high_cost",
-        "graviton_migration_candidate", "spot_candidate",
-        "deployment_correlated_latency_spike", "disk_full_risk",
-    },
-    "s3_specialist": {
-        "storage_growth_anomaly", "stale_data_accumulation", "no_lifecycle_policy",
-        "public_bucket_detected", "no_encryption", "no_versioning",
-        "no_access_logging", "no_replication", "high_retrieval_cost",
-        "intelligent_tiering_candidate", "glacier_candidate",
-        "small_object_overhead", "cross_region_transfer_cost",
-    },
-    "dynamodb_specialist": {
-        "throttling_detected", "hot_partition_detected", "retry_storm",
-        "scan_heavy_workload", "overprovisioned_rcu", "overprovisioned_wcu",
-        "underprovisioned_rcu", "underprovisioned_wcu", "replication_lag_high",
-        "pitr_disabled", "no_backup", "autoscaling_flapping",
-        "gsi_overprovisioned", "on_demand_candidate", "provisioned_candidate",
-        "latency_anomaly",
-    },
-}
-
-# Rec-type relevance per sub-agent (which prior rec types are useful context)
-_REC_TYPE_RELEVANCE = {
-    "ec2_metric":       {"performance", "reliability"},
-    "ec2_cost":         {"cost", "performance"},
-    "ec2_reliability":  {"reliability", "performance", "operational"},
-    "ec2_security":     {"security"},
-    "ec2_root_cause":   {"performance", "reliability", "security", "operational", "cost"},
-    "s3_storage":       {"cost", "performance"},
-    "s3_cost":          {"cost"},
-    "s3_reliability":   {"reliability"},
-    "s3_security":      {"security"},
-    "s3_access":        {"cost", "performance"},
-    "s3_root_cause":    {"performance", "reliability", "security", "operational", "cost"},
-    "dynamodb_capacity":     {"cost", "performance"},
-    "dynamodb_performance":  {"performance", "reliability"},
-    "dynamodb_reliability":  {"reliability"},
-    "dynamodb_root_cause":   {"performance", "reliability", "cost", "operational"},
-}
+SIGNAL_DOMAIN_MAP: Dict[str, Set[str]] = registry.get_signal_domain_map()
 
 
 def build_agent_context(
@@ -164,7 +37,8 @@ def build_agent_context(
     Build a curated context payload for a specific agent.
     Filters signals to only include those relevant to this agent's domain.
     """
-    domain_signals = SIGNAL_DOMAIN_MAP.get(agent_id, set())
+    agent_def = registry.get_agent_definition(agent_id)
+    domain_signals = agent_def.signal_domain if agent_def else set()
 
     relevant_signals = [
         s for s in signals
@@ -178,7 +52,7 @@ def build_agent_context(
 
     recent_decisions = session_decisions[-5:]
 
-    context = {
+    context: Dict[str, Any] = {
         "agent_id": agent_id,
         "resource": _slim_resource(resource),
         "signals": relevant_signals,
@@ -205,7 +79,7 @@ def build_cross_agent_summary(
     Build a compact summary of what other agents have found.
     Used to give each sub-agent visibility into sibling findings.
     """
-    summary = []
+    summary: List[Dict[str, Any]] = []
     for agent_name, recs in findings.items():
         if agent_name == current_agent or not recs:
             continue
@@ -231,15 +105,17 @@ def _slim_resource(resource: Dict[str, Any]) -> Dict[str, Any]:
 
 def _is_relevant_recommendation(agent_id: str, rec: Dict[str, Any]) -> bool:
     rec_type = (rec.get("type") or "").lower()
-    allowed = _REC_TYPE_RELEVANCE.get(agent_id)
-    if allowed is None:
+    agent_def = registry.get_agent_definition(agent_id)
+    if not agent_def or not agent_def.rec_type_relevance:
         return True
-    return rec_type in allowed
+    return rec_type in agent_def.rec_type_relevance
 
 
 def _detect_recurring(recommendations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     from collections import Counter
-    rule_counts = Counter(r.get("rule_id") for r in recommendations if r.get("rule_id"))
+    rule_counts = Counter(
+        r.get("rule_id") for r in recommendations if r.get("rule_id")
+    )
     return [
         {"rule_id": rid, "occurrences": count}
         for rid, count in rule_counts.items()
