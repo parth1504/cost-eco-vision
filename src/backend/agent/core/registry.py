@@ -47,9 +47,12 @@ class ServiceDefinition:
 
 
 class ServiceRegistry:
+    # Singleton — instantiated once at module level. All service registrations
+    # happen during _discover_services() before any graph node runs.
 
     def __init__(self) -> None:
         self._services: Dict[str, ServiceDefinition] = {}
+        # Reverse index: agent_name → service_type for O(1) lookups
         self._agent_to_service: Dict[str, str] = {}
 
     def register(self, definition: ServiceDefinition) -> None:
@@ -133,6 +136,9 @@ class ServiceRegistry:
         }
 
     def load_telemetry_functions(self, service_type: str):
+        # Lazy import: modules are loaded on first call, not at registration
+        # time. This avoids pulling in heavy SDK deps (boto3, openai) during
+        # startup, which would break the import chain.
         service = self._services.get(service_type)
         if not service:
             return None, None
@@ -166,7 +172,8 @@ class ServiceRegistry:
 
 registry = ServiceRegistry()
 
-
+# Each register.py module calls registry.register() at import time.
+# To add a new service, create <service>_agent/register.py and add it here.
 _REGISTRATION_MODULES = [
     "agent.ec2_agent.register",
     "agent.s3_agent.register",
@@ -175,6 +182,7 @@ _REGISTRATION_MODULES = [
 
 
 def _discover_services() -> None:
+    """Import each registration module so it self-registers with the singleton."""
     for mod_path in _REGISTRATION_MODULES:
         try:
             importlib.import_module(mod_path)
@@ -184,4 +192,6 @@ def _discover_services() -> None:
             )
 
 
+# Runs at import time — must complete before nodes.py reads the registry
+# to build SUB_AGENT_NODES.
 _discover_services()

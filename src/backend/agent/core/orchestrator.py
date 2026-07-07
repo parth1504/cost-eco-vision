@@ -45,6 +45,7 @@ class MultiAgentOrchestrator:
         initial_state = create_initial_state(resources, session_id=session_id)
         sid = initial_state["session_id"]
 
+        # thread_id maps to MemorySaver — same session_id can resume state
         config = {
             "configurable": {"thread_id": sid},
             "metadata": {
@@ -79,7 +80,7 @@ class MultiAgentOrchestrator:
         resources: List[Dict[str, Any]],
         session_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Async version that yields events for real-time streaming."""
+        """Async version using astream_events for real-time SSE streaming."""
         initial_state = create_initial_state(resources, session_id=session_id)
         sid = initial_state["session_id"]
 
@@ -137,6 +138,7 @@ class MultiAgentOrchestrator:
                 return snapshot.values
         except Exception:
             pass
+        # Fallback to persistent memory if checkpointer has been evicted
         return agent_memory.get_session_state(session_id)
 
     def _build_response(self, state: dict, elapsed_ms: float) -> Dict[str, Any]:

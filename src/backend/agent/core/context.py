@@ -22,6 +22,8 @@ from agent.core.registry import registry
 
 logger = logging.getLogger(__name__)
 
+# Materialized at import time for backward compatibility with code that
+# reads SIGNAL_DOMAIN_MAP directly. New code should use the registry.
 SIGNAL_DOMAIN_MAP: Dict[str, Set[str]] = registry.get_signal_domain_map()
 
 
@@ -40,11 +42,14 @@ def build_agent_context(
     agent_def = registry.get_agent_definition(agent_id)
     domain_signals = agent_def.signal_domain if agent_def else set()
 
+    # If the agent has no declared signal domain, pass all signals through
+    # (fail-open so new agents work before their domains are fully configured).
     relevant_signals = [
         s for s in signals
         if s.get("name") in domain_signals or not domain_signals
     ]
 
+    # Cap prior recs and decisions to keep the LLM context window manageable
     relevant_prior = [
         r for r in prior_recommendations
         if _is_relevant_recommendation(agent_id, r)
@@ -96,6 +101,7 @@ def build_cross_agent_summary(
 
 
 def _slim_resource(resource: Dict[str, Any]) -> Dict[str, Any]:
+    # Strip bulky fields (raw metrics, full config) that waste LLM tokens.
     keep_keys = {
         "resource_id", "name", "type", "region", "status", "monthly_cost",
         "tags", "instance_type", "creation_date", "is_optimized",
@@ -112,6 +118,8 @@ def _is_relevant_recommendation(agent_id: str, rec: Dict[str, Any]) -> bool:
 
 
 def _detect_recurring(recommendations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    # Surface rules that keep appearing — helps agents avoid re-issuing
+    # the same recommendation and instead focus on root cause.
     from collections import Counter
     rule_counts = Counter(
         r.get("rule_id") for r in recommendations if r.get("rule_id")

@@ -44,6 +44,7 @@ from agent.core.nodes import (
 
 logger = logging.getLogger(__name__)
 
+# Fixed pipeline stages — always present regardless of which services are registered.
 _PIPELINE_NODES = [
     "collect_telemetry",
     "extract_signals",
@@ -55,6 +56,8 @@ _PIPELINE_NODES = [
     "evaluate",
 ]
 
+# Merge pipeline nodes with dynamically discovered sub-agent nodes
+# to form the full set of targets the supervisor can route to.
 _ALL_ROUTING_TARGETS = _PIPELINE_NODES + list(SUB_AGENT_NODES.keys())
 
 
@@ -80,10 +83,13 @@ def build_graph() -> StateGraph:
 
     graph.set_entry_point("supervisor")
 
+    # Supervisor uses conditional edges — state["next_action"] selects
+    # which node runs next. "__end__" terminates the graph.
     routing_map = {name: name for name in _ALL_ROUTING_TARGETS}
     routing_map["__end__"] = END
     graph.add_conditional_edges("supervisor", _route_from_supervisor, routing_map)
 
+    # Every non-terminal node returns to supervisor for re-routing.
     graph.add_edge("collect_telemetry", "supervisor")
     graph.add_edge("extract_signals", "supervisor")
     graph.add_edge("safety_and_rank", "supervisor")
@@ -95,6 +101,7 @@ def build_graph() -> StateGraph:
     for name in SUB_AGENT_NODES:
         graph.add_edge(name, "supervisor")
 
+    # evaluate is the only node that terminates the graph directly.
     graph.add_edge("evaluate", END)
 
     return graph
@@ -105,5 +112,7 @@ def compile_graph(checkpointer: MemorySaver | None = None):
     return graph.compile(checkpointer=checkpointer)
 
 
+# Module-level compilation — the graph is built once at startup and reused
+# across all API requests. MemorySaver enables session replay via thread_id.
 checkpointer = MemorySaver()
 compiled_graph = compile_graph(checkpointer=checkpointer)
