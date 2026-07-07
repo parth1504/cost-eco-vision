@@ -55,18 +55,6 @@ TABLES = [
         "BillingMode": "PAY_PER_REQUEST",
     },
     {
-        # An incident = a cluster of correlated alerts, built by services/correlation.py.
-        # Status lifecycle: open -> investigating -> mitigated -> resolved.
-        "TableName": "Incidents",
-        "KeySchema": [
-            {"AttributeName": "incident_id", "KeyType": "HASH"},
-        ],
-        "AttributeDefinitions": [
-            {"AttributeName": "incident_id", "AttributeType": "S"},
-        ],
-        "BillingMode": "PAY_PER_REQUEST",
-    },
-    {
         # Cached AI triage for security findings — keyed by the finding's stable id
         # (resource id / bucket name / sg id / etc.) so re-running the security
         # scan doesn't lose previously-generated triage context.
