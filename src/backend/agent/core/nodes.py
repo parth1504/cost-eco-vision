@@ -39,6 +39,8 @@ from agent.core.context import (
 
 logger = logging.getLogger(__name__)
 
+# Guard against infinite supervisor loops: cap how many times critique→refine
+# can cycle and how often any single sub-agent can be invoked per session.
 MAX_REFINEMENT_ITERATIONS = 2
 MAX_CALLS_PER_AGENT = 2
 
@@ -193,6 +195,8 @@ def supervisor(state: AgentState) -> dict:
 # ---------------------------------------------------------------------------
 
 def _route_next_sub_agent(state: AgentState) -> Optional[Tuple[str, str]]:
+    # LLM routing first for nuanced decisions; falls back to deterministic
+    # rule-based routing if LLM is unavailable or returns an invalid agent.
     llm_result = _llm_route(state)
     if llm_result is not None:
         return llm_result
@@ -281,6 +285,7 @@ def _llm_route(state: AgentState) -> Optional[Tuple[str, str]]:
         from agent.llm.llm_client import get_llm_client
         text = get_llm_client().generate(full_prompt) or ""
 
+        # LLM may wrap JSON in markdown fences — strip them before parsing
         fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
         if fenced:
             text = fenced.group(1)
@@ -298,6 +303,7 @@ def _llm_route(state: AgentState) -> Optional[Tuple[str, str]]:
             logger.info("LLM router decided DONE: %s", reason)
             return None
 
+        # Validate against registry — LLM may hallucinate agent names
         if next_agent not in all_agent_names:
             logger.warning("LLM suggested unknown agent '%s', falling back", next_agent)
             return None
@@ -323,6 +329,7 @@ def _rule_based_route(state: AgentState) -> Optional[Tuple[str, str]]:
 
     resource_types = {r.get("resource_id"): r.get("type") for r in resources}
 
+    # Group extracted signal names by service type (EC2, S3, etc.)
     signals_by_service: Dict[str, set] = {}
     for rid, signals in signals_map.items():
         rtype = resource_types.get(rid)
@@ -345,6 +352,9 @@ def _rule_based_route(state: AgentState) -> Optional[Tuple[str, str]]:
             if agent_counts.get(agent_name, 0) >= MAX_CALLS_PER_AGENT:
                 continue
 
+            # Root-cause agents only run after domain agents have produced
+            # findings AND there are >=2 signals — they need enough data
+            # to perform meaningful causal correlation.
             if agent_def.is_root_cause:
                 has_findings = any(
                     bool(findings.get(a)) for a in service_agent_names
@@ -352,6 +362,8 @@ def _rule_based_route(state: AgentState) -> Optional[Tuple[str, str]]:
                 if not has_findings or len(service_signals) < 2:
                     continue
 
+            # Skip agents whose routing_signals don't intersect with
+            # the signals actually extracted for this service.
             if agent_def.routing_signals:
                 if not (service_signals & agent_def.routing_signals):
                     continue
@@ -365,6 +377,7 @@ def _rule_based_route(state: AgentState) -> Optional[Tuple[str, str]]:
     if not candidates:
         return None
 
+    # Higher priority runs first (e.g. ec2_metric=10 before ec2_security=6)
     candidates.sort(key=lambda c: c[2], reverse=True)
     return (candidates[0][0], f"[Rule] {candidates[0][1]}")
 
@@ -436,6 +449,7 @@ def _run_sub_agent_node(state: AgentState, agent_name: str) -> dict:
                 rec_dict = _to_dict(rec, service_type, rid)
                 recs.append(rec_dict)
         except TypeError:
+            # Backward compat: older agent functions don't accept `context`
             try:
                 result = agent_fn(bundle, signals)
                 for rec in result:
@@ -484,6 +498,7 @@ def _make_sub_agent_node(agent_name: str):
     """Factory: create a LangGraph node function for a registered agent."""
     def node_fn(state: AgentState) -> dict:
         return _run_sub_agent_node(state, agent_name)
+    # LangGraph uses __name__ for tracing and LangSmith spans
     node_fn.__name__ = agent_name
     node_fn.__qualname__ = agent_name
     return node_fn
@@ -524,6 +539,8 @@ def _apply_safety_filters(
     recs: List[Dict[str, Any]],
     resources: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
+    # Drop low-confidence and evidence-free recs, then dedup by keeping
+    # the highest-confidence rec per (resource_id, rule_id) pair.
     MIN_CONFIDENCE = 0.4
     seen_rules: Dict[str, Dict[str, Any]] = {}
 
@@ -1014,7 +1031,8 @@ def _trace_step(agent_name: str, finding_count: int, state: AgentState) -> Dict[
 
 
 # ---------------------------------------------------------------------------
-# Dynamic sub-agent node map — built from registry
+# Dynamic sub-agent node map — built from registry at import time.
+# graph.py reads this dict to register LangGraph nodes and conditional edges.
 # ---------------------------------------------------------------------------
 
 SUB_AGENT_NODES = {

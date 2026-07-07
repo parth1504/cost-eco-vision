@@ -16,6 +16,8 @@ from typing import Any, Annotated, Dict, List, Optional, TypedDict
 
 
 class AgentState(TypedDict, total=False):
+    # total=False: every field is optional so nodes only return the keys
+    # they update — LangGraph merges partial dicts into accumulated state.
 
     # --- Inputs ---
     session_id: str
@@ -23,25 +25,27 @@ class AgentState(TypedDict, total=False):
     resources: List[Dict[str, Any]]
 
     # --- Telemetry layer ---
-    telemetry_bundles: Dict[str, Any]
-    signals_map: Dict[str, List[Any]]
+    telemetry_bundles: Dict[str, Any]       # resource_id → normalized bundle
+    signals_map: Dict[str, List[Any]]       # resource_id → Signal objects
 
     # --- Sub-agent tracking ---
-    findings: Dict[str, List[Dict[str, Any]]]
-    agent_call_counts: Dict[str, int]
+    findings: Dict[str, List[Dict[str, Any]]]   # agent_name → recommendations
+    agent_call_counts: Dict[str, int]            # agent_name → invocation count
 
     # --- Pipeline stages ---
-    all_recommendations: List[Dict[str, Any]]
+    all_recommendations: List[Dict[str, Any]]    # after safety_and_rank
     critique_results: Dict[str, Any]
     correlations: List[Dict[str, Any]]
-    recommendations: List[Dict[str, Any]]
+    recommendations: List[Dict[str, Any]]        # final verified output
 
     # --- Routing ---
-    next_action: str
+    next_action: str    # supervisor sets this; graph conditional edge reads it
     phase: str
-    iteration: int
+    iteration: int      # tracks critique→refine loop count
 
-    # --- Tracing (append-only) ---
+    # --- Tracing (append-only via operator.add) ---
+    # LangGraph merges these with list concatenation, so each node can
+    # return new entries without overwriting previous ones.
     messages: Annotated[List[Dict[str, Any]], operator.add]
     decisions: Annotated[List[Dict[str, Any]], operator.add]
     agent_trace: Annotated[List[Dict[str, Any]], operator.add]

@@ -1,4 +1,17 @@
-"""EC2 service registration for the dynamic service registry."""
+"""
+EC2 service registration for the dynamic service registry.
+
+Imported at startup by registry._discover_services(). Calling
+registry.register() here makes EC2 agents available to the LangGraph
+pipeline without any changes to core code.
+
+Routing priorities (higher = runs first):
+  10 — ec2_metric    (baseline: always runs first for EC2 signals)
+   8 — ec2_cost      (triggered by cost-specific signals)
+   7 — ec2_reliability
+   6 — ec2_security
+   3 — ec2_root_cause (runs last, only after other agents have findings)
+"""
 
 from agent.core.registry import (
     AgentDefinition,
@@ -8,6 +21,8 @@ from agent.core.registry import (
 
 registry.register(ServiceDefinition(
     service_type="EC2",
+    # Module paths as strings — imported lazily to avoid pulling in boto3/openai
+    # during startup (which would break the import chain).
     telemetry_module="agent.ec2_agent.telemetry",
     signals_module="agent.ec2_agent.signals",
     report_module="agent.ec2_agent.report",

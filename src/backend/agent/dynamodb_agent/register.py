@@ -1,4 +1,10 @@
-"""DynamoDB service registration for the dynamic service registry."""
+"""
+DynamoDB service registration for the dynamic service registry.
+
+All DynamoDB domain agents share priority=5. The root-cause agent
+(priority=3, is_root_cause=True) is gated: it only runs when domain
+agents have already produced findings and >=2 signals are present.
+"""
 
 from agent.core.registry import (
     AgentDefinition,

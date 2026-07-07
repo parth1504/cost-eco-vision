@@ -1,4 +1,10 @@
-"""S3 service registration for the dynamic service registry."""
+"""
+S3 service registration for the dynamic service registry.
+
+All S3 domain agents share priority=5 (no inherent ordering among them).
+The root-cause agent runs at priority=3 — only after domain agents
+have produced findings and >=2 signals exist.
+"""
 
 from agent.core.registry import (
     AgentDefinition,
