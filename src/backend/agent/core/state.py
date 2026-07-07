@@ -1,11 +1,16 @@
 """
 LangGraph state definition for the unified multi-agent orchestrator.
 
-The state flows through the entire pipeline:
-  telemetry → signals → sub-agents → safety → rank →
-  critique → refine → correlate → verify → evaluate
+AgentState is a TypedDict that acts as the shared memory for the entire
+graph run. Every node receives the full state and returns a partial dict
+with only the keys it wants to update. LangGraph handles the merge:
 
-Annotated fields with operator.add are append-only lists.
+  - Normal fields (e.g. next_action, findings): new value overwrites old
+  - Annotated fields with operator.add (e.g. messages, decisions):
+    new list is APPENDED to existing list, so entries accumulate
+
+This means a node can safely return {"messages": [new_msg]} without
+worrying about losing messages from previous nodes.
 """
 
 from __future__ import annotations
@@ -60,6 +65,10 @@ def create_initial_state(
     resources: List[Dict[str, Any]],
     session_id: Optional[str] = None,
 ) -> AgentState:
+    """Build the starting state for a new graph run.
+
+    next_action is set to "collect_telemetry" so the supervisor's first
+    decision routes to telemetry collection (the first pipeline stage)."""
     return AgentState(
         session_id=session_id or str(uuid.uuid4()),
         trace_id=str(uuid.uuid4()),

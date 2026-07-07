@@ -1,16 +1,32 @@
 """
-Context engineering layer.
+Context engineering layer — controls what information each agent sees.
 
-Controls what information each agent sees. Raw telemetry never reaches
-an LLM directly — this layer curates the context window with:
-  - Relevant signals (not all signals, just the ones this agent cares about)
-  - Prior recommendations for this resource (from memory)
-  - Cross-agent findings (what other agents have already found)
-  - Session history (what has already been decided)
+Raw telemetry never reaches an LLM directly. This module curates
+each agent's context window so it only sees what's relevant:
 
-Signal domains and rec-type relevance are loaded from the dynamic
-service registry — adding a new service automatically extends context
-filtering without touching this file.
+  1. Signal filtering:
+     Each agent declares a signal_domain (set of signal names) in its
+     AgentDefinition. build_agent_context() filters the full signal list
+     to only include signals in that domain. An ec2_cost agent won't see
+     security signals; an s3_reliability agent won't see cost signals.
+
+  2. Prior recommendation filtering:
+     Each agent declares rec_type_relevance (e.g. {"cost", "performance"}).
+     Only prior recs matching those types are included, so the agent
+     isn't distracted by unrelated history.
+
+  3. Cross-agent findings:
+     A compact summary of what OTHER agents have already found for this
+     resource. Enables agents to build on each other's work instead of
+     working in isolation.
+
+  4. Recurring pattern detection:
+     If the same rule_id appears 3+ times in prior recommendations,
+     it's flagged as a recurring pattern — a hint to the agent to
+     focus on root cause rather than re-issuing the same rec.
+
+All filtering metadata comes from the dynamic service registry.
+Adding a new service automatically extends context filtering.
 """
 
 from __future__ import annotations
@@ -81,8 +97,11 @@ def build_cross_agent_summary(
     current_agent: str,
 ) -> List[Dict[str, Any]]:
     """
-    Build a compact summary of what other agents have found.
-    Used to give each sub-agent visibility into sibling findings.
+    Build a compact summary of what OTHER agents have found.
+
+    This enables cross-agent awareness: if ec2_cost found an idle instance,
+    ec2_security can see that and prioritize checking its security posture.
+    Capped at 5 recs per agent to keep context tight.
     """
     summary: List[Dict[str, Any]] = []
     for agent_name, recs in findings.items():
@@ -136,6 +155,9 @@ def build_critique_context(
     signals: List[Dict[str, Any]],
     resource: Dict[str, Any],
 ) -> Dict[str, Any]:
+    """Context for the critique node — includes all recs to review,
+    the available signals (so critique can check evidence claims),
+    and structured instructions for the LLM quality reviewer."""
     return {
         "agent_id": "critique",
         "resource": _slim_resource(resource),
@@ -155,6 +177,9 @@ def build_correlation_context(
     all_findings: Dict[str, List[Dict[str, Any]]],
     resources: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
+    """Context for the correlate node — gives the LLM a cross-resource
+    view of all findings so it can spot dependencies, conflicts, and
+    compound savings that no single-resource agent would catch."""
     return {
         "agent_id": "correlation",
         "resources": [_slim_resource(r) for r in resources],

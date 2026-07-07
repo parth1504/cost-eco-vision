@@ -1,17 +1,23 @@
 """
 LangGraph node functions for the unified multi-agent orchestrator.
 
-Pipeline nodes (in execution order):
-  1. collect_telemetry  — build TelemetryBundle per resource
-  2. extract_signals    — extract intelligence signals from bundles
-  3. supervisor         — LLM + rule-based router decides next sub-agent
-  4. Sub-agent nodes    — per-service specialist agents (context-aware)
-  5. safety_and_rank    — guardrails + dedup + priority ordering
-  6. critique           — LLM quality review of recommendations
-  7. refine             — apply critique feedback
-  8. correlate          — LLM cross-resource pattern detection
-  9. verify             — verification gates
- 10. evaluate           — quality metrics + session persistence
+Every function in this module is a LangGraph "node" — it receives the full
+AgentState dict, does some work, and returns a partial dict that LangGraph
+merges back into state. Nodes never call each other directly; the graph
+edges (defined in graph.py) control execution order.
+
+Pipeline nodes (in execution order controlled by the supervisor):
+  1. collect_telemetry  — call per-service telemetry collectors via registry
+  2. extract_signals    — call per-service signal extractors via registry
+  3. supervisor         — read state, decide which node runs next (sets next_action)
+  4. Sub-agent nodes    — dynamically created wrappers that call per-service
+                          agent functions via registry (e.g. ec2_metric, s3_cost)
+  5. safety_and_rank    — drop low-confidence recs, dedup, filter evidence-free
+  6. critique           — LLM + rule-based quality review of recommendations
+  7. refine             — apply critique feedback (lower confidence, add warnings)
+  8. correlate          — LLM + rule-based cross-resource pattern detection
+  9. verify             — run guardrail gates, drop failing recommendations
+ 10. evaluate           — compute quality metrics, persist session to memory
 
 Sub-agent nodes are registered dynamically from the service registry.
 Adding a new AWS service auto-discovers its agents — no changes here.
@@ -46,14 +52,19 @@ MAX_CALLS_PER_AGENT = 2
 
 
 # ---------------------------------------------------------------------------
-# Collect Telemetry — registry-driven
+# Collect Telemetry
 # ---------------------------------------------------------------------------
+# First pipeline stage. For each resource, looks up the correct service's
+# telemetry collector from the registry (e.g. EC2 → ec2_agent.telemetry),
+# calls collect_from_resource() + normalize(), and stores the result
+# in telemetry_bundles keyed by resource_id.
 
 def collect_telemetry(state: AgentState) -> dict:
     resources = state.get("resources", [])
     bundles: Dict[str, Any] = {}
 
     for resource in resources:
+        # Skip resources that already have recommendations (e.g. cached)
         if resource.get("recommendations"):
             continue
         rid = resource.get("resource_id", "")
@@ -75,8 +86,12 @@ def collect_telemetry(state: AgentState) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Extract Signals — registry-driven
+# Extract Signals
 # ---------------------------------------------------------------------------
+# Second stage. Transforms raw telemetry bundles into typed Signal objects
+# (name, severity, confidence, description). Signals are the intelligence
+# layer — raw telemetry never reaches downstream agents directly. Each
+# service has its own signal extractor that knows its domain.
 
 def extract_signals(state: AgentState) -> dict:
     bundles = state.get("telemetry_bundles", {})
@@ -103,8 +118,25 @@ def extract_signals(state: AgentState) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Supervisor — LLM + rule-based dynamic router
+# Supervisor — the central routing node
 # ---------------------------------------------------------------------------
+# The supervisor is the heart of the LangGraph loop. It runs after every
+# other node completes (all edges point back to supervisor). It inspects
+# the current state and decides what to do next by setting next_action.
+#
+# The decision cascade is a priority chain:
+#   1. No telemetry yet?        → collect_telemetry
+#   2. No signals yet?          → extract_signals
+#   3. Uncovered signal domains → route to next sub-agent (LLM + rule-based)
+#   4. Findings exist, no safety pass yet? → safety_and_rank
+#   5. Not critiqued yet?       → critique
+#   6. Critique found issues?   → refine (up to MAX_REFINEMENT_ITERATIONS)
+#   7. Multiple resources, no correlations? → correlate
+#   8. Not verified yet?        → verify
+#   9. All done?                → evaluate (terminal)
+#
+# The conditional edge in graph.py reads state["next_action"] and routes
+# to that node. This is how the supervisor pattern works in LangGraph.
 
 def supervisor(state: AgentState) -> dict:
     findings = state.get("findings", {})
@@ -191,8 +223,19 @@ def supervisor(state: AgentState) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# LLM-powered sub-agent routing
+# Sub-agent routing — decides WHICH specialist agent runs next
 # ---------------------------------------------------------------------------
+# Two routing strategies, tried in order:
+#   1. LLM routing: sends signal summary, findings, and call counts to the
+#      LLM and asks it to pick the next agent. Catches nuanced patterns
+#      like "security agent should run because cost agent found idle
+#      instances that may also have open ports."
+#   2. Rule-based fallback: deterministic matching of extracted signals
+#      against each agent's routing_signals set. Used when LLM is
+#      unavailable, returns bad JSON, or suggests an invalid agent.
+#
+# Both strategies consult the registry for agent definitions, so adding
+# a new service automatically makes its agents routable.
 
 def _route_next_sub_agent(state: AgentState) -> Optional[Tuple[str, str]]:
     # LLM routing first for nuanced decisions; falls back to deterministic
@@ -383,15 +426,21 @@ def _rule_based_route(state: AgentState) -> Optional[Tuple[str, str]]:
 
 
 # ---------------------------------------------------------------------------
-# Sub-agent node — registry-driven generic wrapper
+# Sub-agent node — generic wrapper for all service-specific agents
 # ---------------------------------------------------------------------------
+# Every sub-agent node (ec2_metric, s3_cost, dynamodb_capacity, etc.)
+# calls this same function with a different agent_name. The wrapper:
+#   1. Looks up the agent function from registry (lazy import)
+#   2. Filters resources to only this agent's service type
+#   3. Builds curated context (relevant signals, prior recs, cross-agent
+#      findings) via build_agent_context() — the agent never sees raw
+#      telemetry or irrelevant signals
+#   4. Calls the agent function and collects recommendations
+#   5. Converts Recommendation objects to dicts via the service's
+#      to_legacy_dict() converter
+#   6. Merges results into state (findings, call counts, trace)
 
 def _run_sub_agent_node(state: AgentState, agent_name: str) -> dict:
-    """
-    Generic wrapper for any sub-agent node.
-    Looks up the agent function, service type, and report converter
-    from the registry. Builds curated context from cross-agent findings.
-    """
     agent_def = registry.get_agent_definition(agent_name)
     service = registry.get_service_for_agent(agent_name)
     if not agent_def or not service:
@@ -560,8 +609,14 @@ def _apply_safety_filters(
 
 
 # ---------------------------------------------------------------------------
-# Critique — LLM-powered quality review
+# Critique — quality review of recommendations
 # ---------------------------------------------------------------------------
+# Runs both rule-based and LLM checks on all recommendations:
+#   - Rule-based: missing evidence, low confidence, duplicate types,
+#     high-severity recs without rollback plans or actionable steps
+#   - LLM: contradictions, unrealistic savings, cascade risks,
+#     missing context, prioritization gaps
+# Issues found here feed into the refine node (next step).
 
 def critique(state: AgentState) -> dict:
     recommendations = state.get("all_recommendations", [])
@@ -697,8 +752,16 @@ def _llm_critique(recommendations: List[Dict[str, Any]]) -> List[Dict[str, Any]]
 
 
 # ---------------------------------------------------------------------------
-# Refine
+# Refine — apply critique feedback to recommendations
 # ---------------------------------------------------------------------------
+# For each critiqued recommendation, applies targeted fixes:
+#   - low_confidence     → penalize confidence score
+#   - missing_rollback   → add generic rollback plan
+#   - missing_evidence   → penalize confidence score harder
+#   - contradiction      → penalize confidence + add warning
+#   - cascade_risk       → add warning + mark manual_only
+#   - unrealistic        → reset estimated_savings to "Needs verification"
+# After refinement, clears critique results so supervisor doesn't loop.
 
 def refine(state: AgentState) -> dict:
     recommendations = list(state.get("all_recommendations", []))
@@ -750,8 +813,14 @@ def refine(state: AgentState) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Correlate — LLM-powered cross-resource pattern detection
+# Correlate — cross-resource pattern detection
 # ---------------------------------------------------------------------------
+# Looks for patterns that span multiple resources:
+#   Rule-based: idle resource clusters, recurring security gaps,
+#     co-located resources in the same service tag
+#   LLM: dependencies, cascade risks, amplified savings,
+#     shared root causes across different resources/services
+# Only runs when there are 2+ resources to correlate.
 
 def correlate(state: AgentState) -> dict:
     resources = state.get("resources", [])
@@ -914,8 +983,11 @@ def _llm_correlate(
 
 
 # ---------------------------------------------------------------------------
-# Verify — verification gates
+# Verify — run guardrail gates before final output
 # ---------------------------------------------------------------------------
+# Each recommendation passes through verification gates (defined in
+# guardrails.py). Recommendations that fail any gate are dropped.
+# Surviving recs get a verification stamp with gate pass/review counts.
 
 def verify(state: AgentState) -> dict:
     all_recs = state.get("all_recommendations", [])
@@ -956,8 +1028,12 @@ def verify(state: AgentState) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Evaluate — quality metrics + session persistence
+# Evaluate — terminal node (quality metrics + session persistence)
 # ---------------------------------------------------------------------------
+# Final node in the pipeline. Computes quality scores per resource,
+# persists the session state and snapshot to agent_memory, and sets
+# next_action="__end__" so the graph terminates. This is the only node
+# with a direct edge to END (not back to supervisor).
 
 def evaluate(state: AgentState) -> dict:
     recommendations = state.get("recommendations", [])

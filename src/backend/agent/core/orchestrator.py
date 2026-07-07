@@ -1,9 +1,19 @@
 """
-Multi-agent orchestrator powered by LangGraph.
+Multi-agent orchestrator — the public API for running LangGraph analysis.
 
-Thin wrapper around the compiled LangGraph StateGraph. The graph handles
-all routing, state management, and agent coordination. This module
-provides the public API consumed by the FastAPI routes.
+This is a thin wrapper around compiled_graph (from graph.py). It does NOT
+contain any routing logic — all routing is handled by the supervisor node
+inside the graph. This module's responsibilities are:
+
+  1. Create initial state from a list of resource dicts
+  2. Invoke the compiled graph (synchronous, async, or streaming)
+  3. Package the final state into a structured API response
+  4. Handle errors and session state retrieval
+
+Entry points:
+  - services/resources.py calls orchestrator.run() for batch analysis
+  - routes/agent_api.py calls orchestrator.run() for the REST endpoint
+  - analyzer_agent/main.py calls orchestrator.run() for single-resource re-analysis
 """
 
 from __future__ import annotations
@@ -37,10 +47,11 @@ class MultiAgentOrchestrator:
         session_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Execute the full multi-agent analysis pipeline.
+        Execute the full multi-agent analysis pipeline synchronously.
 
-        Returns a response containing recommendations, decisions,
-        messages, verification gates, and evaluation metrics.
+        This is the primary entry point. compiled_graph.invoke() blocks
+        until the graph reaches END (after the evaluate node), then
+        returns the final accumulated state.
         """
         initial_state = create_initial_state(resources, session_id=session_id)
         sid = initial_state["session_id"]
@@ -142,6 +153,8 @@ class MultiAgentOrchestrator:
         return agent_memory.get_session_state(session_id)
 
     def _build_response(self, state: dict, elapsed_ms: float) -> Dict[str, Any]:
+        """Extract fields from the final LangGraph state into the structured
+        response shape that the frontend and API consumers expect."""
         recommendations = state.get("recommendations", [])
         decisions = state.get("decisions", [])
         messages = state.get("messages", [])

@@ -24,7 +24,26 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class AgentDefinition:
-    """A single sub-agent within a service."""
+    """
+    Declares a single sub-agent within a service.
+
+    Each field feeds a different part of the LangGraph pipeline:
+      - node_name:         becomes the LangGraph node name and routing target
+      - function_name:     the callable inside module_path (loaded lazily)
+      - module_path:       stored as string to defer import (avoids circular deps)
+      - description:       injected into the LLM router prompt so it knows
+                           what this agent does and when to call it
+      - signal_domain:     which telemetry signals this agent cares about —
+                           context.py filters signals to only pass relevant ones
+      - rec_type_relevance: which recommendation types (cost, security, etc.)
+                           this agent's prior recs are filtered by in context
+      - routing_signals:   if set, the rule-based router only routes here when
+                           at least one of these signals was extracted
+      - is_root_cause:     root-cause agents are gated — they only run after
+                           domain agents produce findings AND >=2 signals exist
+      - routing_priority:  higher = runs first in rule-based routing (10 is
+                           highest in EC2; root-cause agents use 3)
+    """
     node_name: str
     function_name: str
     module_path: str
@@ -38,11 +57,17 @@ class AgentDefinition:
 
 @dataclass
 class ServiceDefinition:
-    """Everything the pipeline needs to work with a service."""
-    service_type: str
-    telemetry_module: str
-    signals_module: str
-    report_module: str
+    """
+    Everything the LangGraph pipeline needs to work with an AWS service.
+
+    Module paths are strings (not direct imports) so that heavy dependencies
+    like boto3 and openai are only loaded when the pipeline actually runs,
+    not during startup when the registry is being populated.
+    """
+    service_type: str                  # e.g. "EC2", "S3", "DynamoDB"
+    telemetry_module: str              # must export collect_from_resource() + normalize()
+    signals_module: str                # must export extract_signals()
+    report_module: str                 # must export to_legacy_dict()
     agents: Dict[str, AgentDefinition] = field(default_factory=dict)
 
 
@@ -89,6 +114,8 @@ class ServiceRegistry:
         return self._services.get(service_type)
 
     def get_signal_domain_map(self) -> Dict[str, Set[str]]:
+        """Build agent_name → signal_names map. Used by context.py to filter
+        which signals each agent sees (only its domain, not all signals)."""
         domain_map: Dict[str, Set[str]] = {}
         for service in self._services.values():
             for agent_name, agent_def in service.agents.items():
@@ -97,6 +124,8 @@ class ServiceRegistry:
         return domain_map
 
     def get_rec_type_relevance(self) -> Dict[str, Set[str]]:
+        """Build agent_name → rec_type set. Used by context.py to filter
+        which prior recommendations each agent sees in its context."""
         relevance: Dict[str, Set[str]] = {}
         for service in self._services.values():
             for agent_name, agent_def in service.agents.items():
@@ -105,6 +134,8 @@ class ServiceRegistry:
         return relevance
 
     def get_router_agent_descriptions(self) -> str:
+        """Generate the 'Available agents' section for the LLM router prompt.
+        The LLM reads these descriptions to decide which agent to invoke."""
         lines = []
         for service in self._services.values():
             for name, agent_def in service.agents.items():

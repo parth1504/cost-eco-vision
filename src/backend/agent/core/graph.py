@@ -1,24 +1,36 @@
 """
 LangGraph StateGraph — unified multi-agent cloud optimization system.
 
-Single graph replaces every per-service orchestrator and the post-processing
-pipeline. The supervisor node dynamically routes to telemetry collection,
-signal extraction, service-specific sub-agents (discovered from the registry),
-safety/ranking, critique, refine, correlate, verify, and evaluate.
+This module wires together all the node functions from nodes.py into a
+LangGraph StateGraph using the "supervisor" pattern. The key idea:
 
-Sub-agent nodes are registered dynamically from the service registry.
-Adding a new AWS service auto-discovers its agents — no graph changes needed.
+  - ONE central node (supervisor) acts as a router
+  - It reads state["next_action"] and picks which node runs next
+  - After that node finishes, control returns to supervisor
+  - Supervisor re-evaluates state and routes again
+  - This continues until supervisor sets next_action="__end__"
 
-Graph topology:
-    START → supervisor → collect_telemetry     → supervisor
-                       → extract_signals       → supervisor
-                       → [N sub-agent nodes]   → supervisor
-                       → safety_and_rank       → supervisor
-                       → critique              → supervisor
-                       → refine               → supervisor
-                       → correlate            → supervisor
-                       → verify               → supervisor
-                       → evaluate             → END
+This replaces all per-service orchestrators (ec2/complex_orchestrator.py,
+s3/orchestrator.py, dynamodb/orchestrator.py) which had their own
+routing logic. Now there is ONE routing loop that handles all services.
+
+Sub-agent nodes are discovered from the service registry at import time.
+Adding a new AWS service auto-creates its graph nodes — no changes here.
+
+Graph topology (supervisor hub-and-spoke pattern):
+
+    START → supervisor ──→ collect_telemetry   ──→ supervisor
+                    │──→ extract_signals      ──→ supervisor
+                    │──→ ec2_metric           ──→ supervisor
+                    │──→ ec2_cost             ──→ supervisor
+                    │──→ s3_storage           ──→ supervisor
+                    │──→ ... (N sub-agents)   ──→ supervisor
+                    │──→ safety_and_rank      ──→ supervisor
+                    │──→ critique             ──→ supervisor
+                    │──→ refine               ──→ supervisor
+                    │──→ correlate            ──→ supervisor
+                    │──→ verify               ──→ supervisor
+                    └──→ evaluate             ──→ END
 """
 
 from __future__ import annotations
@@ -62,6 +74,8 @@ _ALL_ROUTING_TARGETS = _PIPELINE_NODES + list(SUB_AGENT_NODES.keys())
 
 
 def _route_from_supervisor(state: AgentState) -> str:
+    """Called by LangGraph's conditional edge after supervisor runs.
+    Returns the node name to execute next (or "__end__" to stop)."""
     return state.get("next_action", "__end__")
 
 
@@ -108,6 +122,8 @@ def build_graph() -> StateGraph:
 
 
 def compile_graph(checkpointer: MemorySaver | None = None):
+    """Compile the graph into an executable. The checkpointer saves state
+    after every node so sessions can be inspected or resumed."""
     graph = build_graph()
     return graph.compile(checkpointer=checkpointer)
 
